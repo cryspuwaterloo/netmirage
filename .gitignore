@@ -1,6 +1,7 @@
 # Output
 build
 bin
+src/version.c
 
 # SCons
 .sconsign.dblite
