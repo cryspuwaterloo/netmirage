@@ -10,7 +10,7 @@ sneacVersionRevision = 1
 
 # Set version based on whether we're using git or not
 sneacVersion = '%d.%d.%d'%(sneacVersionMajor, sneacVersionMinor, sneacVersionRevision)
-if os.path.isdir('../.git'):
+if os.path.isdir('../../.git'):
 	try:
 		commitId = subprocess.check_output(['git', 'log', '--format=%h', '-n 1']).strip()
 		print 'Detected git install; using commit version'
@@ -19,9 +19,8 @@ if os.path.isdir('../.git'):
 		dirtyRepo = subprocess.call(['git', 'diff-index', '--cached', 'HEAD', '--quiet'])
 		if not dirtyRepo:
 			dirtyRepo = subprocess.call(['git', 'diff-files', '--quiet'])
-			dirtyRepo = 0
 			if not dirtyRepo:
-				dirtyRepo = subprocess.check_output(['git', 'ls-files', '--exclude-standard', '--others', '..']).strip()
+				dirtyRepo = subprocess.check_output(['git', 'ls-files', '--exclude-standard', '--others', '../..']).strip()
 		if dirtyRepo:
 			print 'Dirty git workspace; using timed version'
 			sneacVersion = '%s.%d'%(sneacVersion, int(time.time()))
@@ -53,11 +52,12 @@ libXmlLibs = subprocess.check_output(['xml2-config', '--libs']).strip()
 print 'Using libxml %s [flags = %s] [libs = %s]'%(libXmlVersion, libXmlFlags, libXmlLibs)
 
 # Build SNEAC
-env = Environment()
+Import('env')
 env.Append(CFLAGS = '-Wall -Werror -fmax-errors=10 -std=c11') 
 env.Append(CFLAGS = libXmlFlags)
 env.Append(LINKFLAGS = libXmlLibs)
-sneac = env.Program('sneac', Glob('*.c'))
+Import('target')
+sneac = env.Program(target, Glob('*.c'))
 
 # Install binaries
-env.Install('../bin', sneac)
+env.Install('../../bin', sneac)
