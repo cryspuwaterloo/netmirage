@@ -3,9 +3,13 @@
 #include <string.h>
 #include <argp.h>
 #include <strings.h>
+#include <libxml/parser.h>
 
 #include "log.h"
 #include "version.h"
+
+//TODO
+#include "graphml.h"
 
 // Argp version and help configuration
 void argpVersion(FILE* stream, struct argp_state* state) {
@@ -56,8 +60,7 @@ error_t parseArg(int key, char* arg, struct argp_state* state) {
 	case 'c': args.clientType = arg; break;
 
 	case 'v': {
-		const char* options[] = {"debug", "info", "warning", "error", NULL};
-		args.verbosity = matchArg(arg, options, state);
+		args.verbosity = matchArg(arg, LogLevelStrings, state);
 		break;
 	}
 
@@ -75,6 +78,10 @@ error_t parseArg(int key, char* arg, struct argp_state* state) {
 }
 
 int main(int argc, char** argv) {
+	// Initialize libxml and ensure that the shared object is the correct version
+	LIBXML_TEST_VERSION
+
+	// Command-line switch definitions
 	struct argp_option options[] = {
 			{ "file",        'f', "FILE",                       0, "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
 
@@ -94,7 +101,39 @@ int main(int argc, char** argv) {
 	args.bandwidthDivisor = ShadowDivisor;
 	args.weightKey = "latency";
 
-	argp_parse (&argp, argc, argv, 0, NULL, NULL);
+	// Parse arguments
+	argp_parse(&argp, argc, argv, 0, NULL, NULL);
+	bool startupError = false;
+
+	// Set up logging
+	if (args.logFile == NULL) {
+		setLogStream(stderr);
+	} else {
+		if (!setLogFile(args.logFile)) {
+			fprintf(stderr, "Could not open custom log file '%s' for writing.\n", args.logFile);
+			startupError = true;
+		}
+	}
+	setLogThreshold(args.verbosity);
+
+	// Set up GraphML parsing
+	initGraphParser();
+
+	// Perform the actual work
+	if (!startupError) {
+		lprintln(LogInfo, "Starting SNEAC: The Large-Scale Network Emulator");
+		//TODO: move app logic to its own unit
+		if (args.topoFile) {
+			printf("%d\n", parseGraphFile(args.topoFile, NULL, NULL, NULL));
+		} else {
+			printf("%d\n", parseGraph(stdin, NULL, NULL, NULL));
+		}
+	}
+	lprintln(LogInfo, "done");
+
+	// Cleanup
+	xmlCleanupParser();
+	cleanupLog();
 
 	return 0;
 }
