@@ -37,11 +37,17 @@ void setLogThreshold(LogLevel level) {
 	logThreshold = level;
 }
 
+// Macro to abort function if level is silenced. Used redundantly for average-case performance.
+#define CHECK_LOG_THRESHOLD(level) if (!logStream || level < logThreshold) return;
+
 void lprintln(LogLevel level, const char* str) {
-	lprintf(level, "%s\n", str);
+	CHECK_LOG_THRESHOLD(level);
+	lprintHead(level);
+	fprintf(logStream, "%s\n", str);
 }
 
 void lprintf(LogLevel level, const char* fmt, ...) {
+	CHECK_LOG_THRESHOLD(level);
 	va_list args;
 	va_start(args, fmt);
 	lvprintf(level, fmt, args);
@@ -49,8 +55,13 @@ void lprintf(LogLevel level, const char* fmt, ...) {
 }
 
 void lvprintf(LogLevel level, const char* fmt, va_list args) {
-	if (!logStream) return;
-	if (level < logThreshold) return;
+	CHECK_LOG_THRESHOLD(level);
+	lprintHead(level);
+	vfprintf(logStream, fmt, args);
+}
+
+void lprintHead(LogLevel level) {
+	CHECK_LOG_THRESHOLD(level);
 
 	// Generate timestamp
 	time_t epochTime;
@@ -64,5 +75,17 @@ void lvprintf(LogLevel level, const char* fmt, va_list args) {
 
 	// Print prepended args
 	fprintf(logStream, "[%s] %s: ", timeStr, LogLevelStrings[level]);
+}
+
+void lprintDirectf(LogLevel level, const char* fmt, ...) {
+	CHECK_LOG_THRESHOLD(level);
+	va_list args;
+	va_start(args, fmt);
+	lvprintDirectf(level, fmt, args);
+	va_end(args);
+}
+
+void lvprintDirectf(LogLevel level, const char* fmt, va_list args) {
+	CHECK_LOG_THRESHOLD(level);
 	vfprintf(logStream, fmt, args);
 }

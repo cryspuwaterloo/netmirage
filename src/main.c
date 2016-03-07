@@ -77,6 +77,10 @@ error_t parseArg(int key, char* arg, struct argp_state* state) {
 	return 0;
 }
 
+//TODO
+void addNode(const GraphNode* node, void* userData) {}
+void addLink(const GraphLink* link, void* userData) {}
+
 int main(int argc, char** argv) {
 	// Initialize libxml and ensure that the shared object is the correct version
 	LIBXML_TEST_VERSION
@@ -116,17 +120,14 @@ int main(int argc, char** argv) {
 	}
 	setLogThreshold(args.verbosity);
 
-	// Set up GraphML parsing
-	initGraphParser();
-
 	// Perform the actual work
 	if (!startupError) {
 		lprintln(LogInfo, "Starting SNEAC: The Large-Scale Network Emulator");
 		//TODO: move app logic to its own unit
 		if (args.topoFile) {
-			printf("%d\n", parseGraphFile(args.topoFile, NULL, NULL, NULL));
+			printf("%d\n", parseGraphFile(args.topoFile, &addNode, &addLink, NULL, args.clientType));
 		} else {
-			printf("%d\n", parseGraph(stdin, NULL, NULL, NULL));
+			printf("%d\n", parseGraph(stdin, &addNode, &addLink, NULL, args.clientType));
 		}
 	}
 	lprintln(LogInfo, "done");
