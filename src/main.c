@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <argp.h>
@@ -7,6 +8,7 @@
 
 #include "log.h"
 #include "version.h"
+#include "net.h"
 
 //TODO
 #include "graphml.h"
@@ -46,6 +48,7 @@ static struct {
 	float bandwidthDivisor;
 	const char* weightKey;
 	const char* clientType;
+	const char* nsPrefix;
 } args;
 
 static const float ShadowDivisor = 125.f;    // KiB/s
@@ -58,6 +61,7 @@ error_t parseArg(int key, char* arg, struct argp_state* state) {
 	case 'l': args.logFile = arg; break;
 	case 'w': args.weightKey = arg; break;
 	case 'c': args.clientType = arg; break;
+	case 'p': args.nsPrefix = arg; break;
 
 	case 'v': {
 		args.verbosity = matchArg(arg, LogLevelStrings, state);
@@ -87,14 +91,16 @@ int main(int argc, char** argv) {
 
 	// Command-line switch definitions
 	struct argp_option options[] = {
-			{ "file",        'f', "FILE",                       0, "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
+			{ "file",         'f', "FILE",                       0, "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
 
-			{ "verbosity",   'v', "{debug,info,warning,error}", 0, "Verbosity of log output.", 1 },
-			{ "log-file",    'l', "FILE",                       0, "Log output to FILE instead of stdout.", 1 },
+			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output.", 1 },
+			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stdout.", 1 },
 
-			{ "units",       'u', "{shadow,modelnet,KiB,Kb}",   0, "Specifies the bandwidth units used in the input file. Shadow uses KiB/s (the default), whereas ModelNet uses Kbit/s.", 2 },
-			{ "weight",      'w', "KEY",                        0, "Edge parameter to use for computing shortest paths for static routes. Must be a key used in the GraphML file (default: \"latency\").", 2},
-			{ "client-node", 'c', "TYPE",                       0, "Type of client nodes. Nodes in the GraphML file whose \"type\" attribute matches this value will be clients. If omitted, all nodes are clients.", 2},
+			{ "units",        'u', "{shadow,modelnet,KiB,Kb}",   0, "Specifies the bandwidth units used in the input file. Shadow uses KiB/s (the default), whereas ModelNet uses Kbit/s.", 2 },
+			{ "weight",       'w', "KEY",                        0, "Edge parameter to use for computing shortest paths for static routes. Must be a key used in the GraphML file (default: \"latency\").", 2},
+			{ "client-node",  'c', "TYPE",                       0, "Type of client nodes. Nodes in the GraphML file whose \"type\" attribute matches this value will be clients. If omitted, all nodes are clients.", 2},
+
+			{ "netns-prefix", 'p', "PREFIX",                     0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"sneac-\").", 3 },
 
 			{ NULL },
 	};
@@ -104,6 +110,7 @@ int main(int argc, char** argv) {
 	args.verbosity = LogError;
 	args.bandwidthDivisor = ShadowDivisor;
 	args.weightKey = "latency";
+	args.nsPrefix = "sneac-";
 
 	// Parse arguments
 	argp_parse(&argp, argc, argv, 0, NULL, NULL);
@@ -119,6 +126,9 @@ int main(int argc, char** argv) {
 		}
 	}
 	setLogThreshold(args.verbosity);
+
+	// Initialize subsystems
+	setNamespacePrefix(args.nsPrefix);
 
 	// Perform the actual work
 	if (!startupError) {
