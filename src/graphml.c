@@ -8,6 +8,45 @@
 
 #include "log.h"
 
+typedef struct {
+	size_t len;
+	xmlChar* data;
+} xmlCharBuffer;
+
+const size_t DefaultXmlBufferLen = 255; // Arbitrary default; very generous for GraphML identifiers
+
+static void initXmlCharBuffer(xmlCharBuffer* buffer) {
+	buffer->len = DefaultXmlBufferLen;
+	buffer->data = malloc(buffer->len);
+}
+
+static void freeXmlCharBuffer(xmlCharBuffer* buffer) {
+	free(buffer->data);
+}
+
+// Copy a libxml string quickly, reallocating the target buffer if needed.
+// We do this to prevent allocating memory for every element in the graph.
+static void copyXmlStr(xmlCharBuffer* dst, const xmlChar* src) {
+	// xmlChars represent bytes of UTF-8 code points. UTF-8 never contains a NUL
+	// except for the final terminator, so we can treat these like C-strings for
+	// the purpose of copying.
+	size_t i = 0;
+	bool overflow = false;
+	while (true) {
+		if (!overflow) {
+			if (i >= dst->len) overflow = true;
+			else dst->data[i] = src[i];
+		}
+		if (src[i] == 0) break;
+		++i;
+	}
+	if (overflow) {
+		dst->len = i * 2;
+		dst->data = realloc(dst->data, dst->len);
+		copyXmlStr(dst, src);
+	}
+}
+
 typedef enum {
 	GpUnknown,	// Inside an unknown element
 	GpInitial,	// Looking for initial graphml element
@@ -47,7 +86,7 @@ typedef struct {
 	} edgeAttribs;
 
 	// Attribute values
-	xmlChar* dataKey;			// Key for the data being parsed
+	xmlCharBuffer dataKey;		// Key for the data being parsed
 	xmlChar* dataValue;			// Buffer for the data value
 	size_t dataValueLen;		// Size of the data value buffer contents
 	size_t dataValueCap;		// Capacity of the data value buffer
@@ -55,10 +94,10 @@ typedef struct {
 
 	// Node and link objects used to pass to the callers
 	GraphNode node;
-	xmlChar* nodeId;
+	xmlCharBuffer nodeId;
 	GraphLink link;
-	xmlChar* linkSourceId;
-	xmlChar* linkTargetId;
+	xmlCharBuffer linkSourceId;
+	xmlCharBuffer linkTargetId;
 
 	// Error handling state
 	bool partialError;	// True when libxml has sent an error message without a newline
@@ -123,11 +162,13 @@ static void initGraphParserState(GraphParserState* state, NewNodeFunc newNode, N
 	state->userData = userData;
 	state->mode = GpInitial;
 	state->defaultUndirected = false;
-	state->dataKey = NULL;
-	state->dataValue = NULL;
-	state->nodeId = NULL;
-	state->linkSourceId = NULL;
-	state->linkTargetId = NULL;
+	initXmlCharBuffer(&state->dataKey);
+	state->dataValueCap = DefaultXmlBufferLen;
+	state->dataValue = malloc(state->dataValueCap);
+	state->dataValueLen = 0;
+	initXmlCharBuffer(&state->nodeId);
+	initXmlCharBuffer(&state->linkSourceId);
+	initXmlCharBuffer(&state->linkTargetId);
 	state->partialError = false;
 	state->dead = false;
 	memset(&state->nodeAttribs, 0, sizeof(state->nodeAttribs));
@@ -136,12 +177,11 @@ static void initGraphParserState(GraphParserState* state, NewNodeFunc newNode, N
 }
 
 static void cleanupGraphParserState(GraphParserState* state) {
-	if (state->nodeId) free(state->nodeId);
-	if (state->linkSourceId) free(state->linkSourceId);
-	if (state->linkTargetId) free(state->linkTargetId);
-
-	if (state->dataKey) free(state->dataKey);
+	freeXmlCharBuffer(&state->dataKey);
 	if (state->dataValue) free(state->dataValue);
+	freeXmlCharBuffer(&state->nodeId);
+	freeXmlCharBuffer(&state->linkSourceId);
+	freeXmlCharBuffer(&state->linkTargetId);
 
 	// Free attribute identifiers. Written this way to avoid another place with explicit names.
 	#define FREE_ATTRIBS(objType) \
@@ -241,9 +281,8 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 			}
 			if (!id) graphFatalError(state, "Topology contained a node without an identifier.\n");
 			else {
-				if (state->nodeId) free(state->nodeId);
-				state->nodeId = xmlStrdup(id);
-				state->node.Id = (const char*)state->nodeId;
+				copyXmlStr(&state->nodeId, id);
+				state->node.Id = (const char*)state->nodeId.data;
 				state->node.Client = (state->clientType != NULL ? false : true);
 				state->node.PacketLoss = 0.0;
 				state->node.BandwidthUp = 0;
@@ -271,12 +310,10 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 			else if (!target) graphFatalError(state, "Topology contained an edge that did not specify a target node.\n");
 			else if (!undirected) graphFatalError(state, "Topology contained a directed edge from '%s' to '%s'. Only undirected edges are supported.\n", source, target);
 			else {
-				if (state->linkSourceId) free(state->linkSourceId);
-				if (state->linkTargetId) free(state->linkTargetId);
-				state->linkSourceId = xmlStrdup(source);
-				state->linkTargetId = xmlStrdup(target);
-				state->link.SourceId = (const char*)state->linkSourceId;
-				state->link.TargetId = (const char*)state->linkTargetId;
+				copyXmlStr(&state->linkSourceId, source);
+				copyXmlStr(&state->linkTargetId, target);
+				state->link.SourceId = (const char*)state->linkSourceId.data;
+				state->link.TargetId = (const char*)state->linkTargetId.data;
 				state->link.Latency = 0.0;
 				state->link.PacketLoss = 0.0;
 				state->link.Jitter = 0.0;
@@ -289,19 +326,16 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 	case GpNode:
 	case GpEdge:
 		if (xmlStrEqual(name, (const xmlChar*)"data")) {
-			if (state->dataKey) free(state->dataKey);
-			state->dataKey = NULL;
+			bool foundKey = false;
 			for (const xmlChar** att = atts; *att; att += 2) {
 				if (xmlStrEqual(att[0], (const xmlChar*)"key")) {
-					state->dataKey = xmlStrdup(att[1]);
+					foundKey = true;
+					copyXmlStr(&state->dataKey, att[1]);
 					break;
 				}
 			}
-			if (!state->dataKey) graphFatalError(state, "Topology contains a data attributed with no key.\n");
-			if (state->dataValue) free(state->dataValue);
-			state->dataValue = NULL;
+			if (!foundKey) graphFatalError(state, "Topology contains a data attributed with no key.\n");
 			state->dataValueLen = 0;
-			state->dataValueCap = 0;
 			state->dataMode = state->mode;
 			state->mode = GpData;
 		} else unknown = true;
@@ -344,25 +378,25 @@ static void graphEndElement(void* ctx, const xmlChar* name) {
 
 		switch (state->dataMode) {
 		case GpNode:
-			if (state->nodeAttribs.typeId && xmlStrEqual(state->dataKey, state->nodeAttribs.typeId)) {
+			if (state->nodeAttribs.typeId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.typeId)) {
 				state->node.Client = (xmlStrEqual(value, (const xmlChar*)"client"));
-			} else if (state->nodeAttribs.packetLossId && xmlStrEqual(state->dataKey, state->nodeAttribs.packetLossId)) {
+			} else if (state->nodeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.packetLossId)) {
 				state->node.PacketLoss = strtod((const char*)value, NULL);
-			} else if (state->nodeAttribs.bandwidthUpId && xmlStrEqual(state->dataKey, state->nodeAttribs.bandwidthUpId)) {
+			} else if (state->nodeAttribs.bandwidthUpId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.bandwidthUpId)) {
 				state->node.BandwidthUp = strtod((const char*)value, NULL);
-			} else if (state->nodeAttribs.bandwidthDownId && xmlStrEqual(state->dataKey, state->nodeAttribs.bandwidthDownId)) {
+			} else if (state->nodeAttribs.bandwidthDownId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.bandwidthDownId)) {
 				state->node.BandwidthDown = strtod((const char*)value, NULL);
 			}
 			break;
 
 		case GpEdge:
-			if (state->edgeAttribs.latencyId && xmlStrEqual(state->dataKey, state->edgeAttribs.latencyId)) {
+			if (state->edgeAttribs.latencyId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.latencyId)) {
 				state->link.Latency = strtod((const char*)value, NULL);
-			} else if (state->edgeAttribs.packetLossId && xmlStrEqual(state->dataKey, state->edgeAttribs.packetLossId)) {
+			} else if (state->edgeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.packetLossId)) {
 				state->link.PacketLoss = strtod((const char*)value, NULL);
-			} else if (state->edgeAttribs.jitterId && xmlStrEqual(state->dataKey, state->edgeAttribs.jitterId)) {
+			} else if (state->edgeAttribs.jitterId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.jitterId)) {
 				state->link.Jitter = strtod((const char*)value, NULL);
-			} else if (state->edgeAttribs.queueLenId && xmlStrEqual(state->dataKey, state->edgeAttribs.queueLenId)) {
+			} else if (state->edgeAttribs.queueLenId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.queueLenId)) {
 				state->link.QueueLen = (uint32_t)strtoul((const char*)value, NULL, 10);
 			}
 			break;
@@ -407,7 +441,7 @@ static void graphCharacters(void* ctx, const xmlChar* ch, int len) {
 		size_t newSize = state->dataValueLen + (size_t)len;
 		if (newSize > state->dataValueCap) {
 			state->dataValueCap = newSize * 2;
-			state->dataValue = (xmlChar*)realloc(state->dataValue, state->dataValueCap+1);
+			state->dataValue = realloc(state->dataValue, state->dataValueCap+1);
 		}
 		memcpy(&state->dataValue[state->dataValueLen], ch, len);
 		state->dataValueLen = newSize;
