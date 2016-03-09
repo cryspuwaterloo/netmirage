@@ -5,6 +5,8 @@
 // represent one of the most significant performance bottlenecks. This module is not
 // thread safe. Additionally, all calls will affect the entire process.
 
+#include "netlink.h"
+
 // Sets the prefix to use for creating namespaces. Max length is theoretically PATH_MAX-1.
 void setNamespacePrefix(const char* prefix);
 
@@ -18,3 +20,6 @@ int deleteNetNamespace(const char* name);
 // Switches the active namespace for the process. If name is NULL or an empty string,
 // switches to the default network namespace for the PID namespace. Returns 0 on success.
 int switchNetNamespace(const char* name);
+
+// Creates a virtual ethernet pair of interfaces in the current namespace.
+int createVethPair(nlContext* ctx, const char* name1, const char* name2);

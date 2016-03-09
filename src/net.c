@@ -8,12 +8,16 @@
 
 #include <fcntl.h>
 #include <linux/limits.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 #include <sched.h>
 #include <sys/mount.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "log.h"
+#include "netlink.h"
 
 // The implementations in this module are highly specific to Linux.
 // The code has been written to be compatible with the named network namespace approach
@@ -178,5 +182,58 @@ int switchNetNamespace(const char* name) {
 	}
 
 	setCurrentNamespacePath(netNsPath);
+	return 0;
+}
+
+// TODO
+int createVethPair(nlContext* ctx, const char* name1, const char* name2) {
+	nlInitMessage(ctx, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK);
+
+	struct ifinfomsg ifi;
+	ifi.ifi_family = AF_UNSPEC;
+	ifi.ifi_type = 0;
+	ifi.ifi_index = 0;
+	ifi.ifi_flags = 0;
+	ifi.ifi_change = ~0;
+
+	nlBufferAppend(ctx, &ifi, sizeof(ifi));
+
+	nlPushAttr(ctx, IFLA_IFNAME);
+		nlBufferAppend(ctx, name1, strlen(name1)+1);
+	nlPopAttr(ctx);
+
+	setupNamespaceEnvironment();
+	createNetNamespace("red");
+	switchNetNamespace(NULL);
+
+	int blueFd = open("/var/run/netns/sneac-blue", O_RDONLY | O_CLOEXEC);
+	int redFd = open("/var/run/netns/sneac-red", O_RDONLY | O_CLOEXEC);
+
+	nlPushAttr(ctx, IFLA_NET_NS_FD);
+		nlBufferAppend(ctx, &blueFd, sizeof(blueFd));
+	nlPopAttr(ctx);
+
+	nlPushAttr(ctx, IFLA_LINKINFO);
+		nlPushAttr(ctx, IFLA_INFO_KIND);
+			nlBufferAppend(ctx, "veth", 4);
+		nlPopAttr(ctx);
+		nlPushAttr(ctx, IFLA_INFO_DATA);
+			nlPushAttr(ctx, 1); // VETH_INFO_PEER
+				nlBufferAppend(ctx, &ifi, sizeof(ifi));
+				nlPushAttr(ctx, IFLA_IFNAME);
+					nlBufferAppend(ctx, name2, strlen(name2)+1);
+				nlPopAttr(ctx);
+				nlPushAttr(ctx, IFLA_NET_NS_FD);
+					nlBufferAppend(ctx, &redFd, sizeof(redFd));
+				nlPopAttr(ctx);
+			nlPopAttr(ctx);
+		nlPopAttr(ctx);
+	nlPopAttr(ctx);
+
+	nlSendMessage(ctx);
+
+	close(blueFd);
+	close(redFd);
+
 	return 0;
 }
