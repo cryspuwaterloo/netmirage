@@ -13,7 +13,8 @@ typedef struct {
 	xmlChar* data;
 } xmlCharBuffer;
 
-const size_t DefaultXmlBufferLen = 255; // Arbitrary default; very generous for GraphML identifiers
+const size_t DefaultXmlBufferLen = 255; // Arbitrary default; very generous
+                                        // for GraphML identifiers
 
 static void initXmlCharBuffer(xmlCharBuffer* buffer) {
 	buffer->len = DefaultXmlBufferLen;
@@ -100,8 +101,8 @@ typedef struct {
 	xmlCharBuffer linkTargetId;
 
 	// Error handling state
-	bool partialError;	// True when libxml has sent an error message without a newline
-	bool dead;			// True when a fatal error has been encountered
+	bool partialError;	// True if libxml sent an error without a newline
+	bool dead;			// True if a fatal error has been encountered
 
 	// Data necessary for calling back to the client
 	void* userData;
@@ -134,7 +135,8 @@ static void showXmlError(void* ctx, const char* msg, ...) {
 		}
 		lprintDirectf(LogError, "%s", errBuffer);
 
-		// The error is considered partial if it is non-empty and doesn't end with a newline
+		// The error is considered partial if it is non-empty and doesn't end
+		// with a newline
 		char* p;
 		for (p = errBuffer; *p; ++p);
 		state->partialError = (errBuffer[0] != '\0' && p[-1] != '\n');
@@ -183,7 +185,8 @@ static void cleanupGraphParserState(GraphParserState* state) {
 	freeXmlCharBuffer(&state->linkSourceId);
 	freeXmlCharBuffer(&state->linkTargetId);
 
-	// Free attribute identifiers. Written this way to avoid another place with explicit names.
+	// Free attribute identifiers. Written this way to avoid another place with
+	// explicit names.
 	#define FREE_ATTRIBS(objType) \
 		for (size_t i = 0; i < sizeof(state->objType##Attribs); i += sizeof(xmlChar*)) { \
 			xmlChar** p = (xmlChar**)(((char*)&state->objType##Attribs) + i); \
@@ -234,7 +237,8 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 
 			if (name && id && type && keyFor) {
 				// Convenience macro used to record attribute identifiers.
-				// We store it explicitly rather than using a hash map for performance reasons.
+				// We store it explicitly rather than using a hash map for
+				// performance reasons.
 				#define CHECK_SET_ATTR(key, acceptInt, acceptFloat, acceptStr, objType, attr) \
 					if (xmlStrEqual(name, (const xmlChar*)key)) { \
 						bool correctType = false; \
@@ -474,7 +478,8 @@ int parseGraph(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* user
 		read = fread(buffer, 1, chunkSize, input);
 		if (read > 0) {
 			if (!xmlContext) {
-				// Initialize the context using the first chunk to detect the encoding
+				// Initialize the context using the first chunk to detect the
+				// encoding
 				xmlContext = xmlCreatePushParserCtxt(&graphHandlers, &state, buffer, read, NULL);
 				if (!xmlContext) {
 					xmlError = -1;

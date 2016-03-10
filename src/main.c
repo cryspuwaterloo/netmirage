@@ -19,7 +19,8 @@ void argpVersion(FILE* stream, struct argp_state* state) {
 }
 void (*argp_program_version_hook)(FILE*, struct argp_state*) = &argpVersion;
 
-// Compares an argument to a list of possibilities and returns the matching index. Errors if unmatched.
+// Compares an argument to a list of possibilities and returns the matching
+// index. Errors if unmatched.
 long matchArg(const char* arg, const char* options[], struct argp_state* state) {
 	if (arg[0]) {
 		// First try converting arg to an index
@@ -86,7 +87,7 @@ void addNode(const GraphNode* node, void* userData) {}
 void addLink(const GraphLink* link, void* userData) {}
 
 int main(int argc, char** argv) {
-	// Initialize libxml and ensure that the shared object is the correct version
+	// Initialize libxml and ensure that the shared object is correct version
 	LIBXML_TEST_VERSION
 
 	// Command-line switch definitions

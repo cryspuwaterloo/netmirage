@@ -37,7 +37,8 @@ void setLogThreshold(LogLevel level) {
 	logThreshold = level;
 }
 
-// Macro to abort function if level is silenced. Used redundantly for average-case performance.
+// Macro to abort function if level is silenced. Used redundantly for
+// average-case performance.
 #define CHECK_LOG_THRESHOLD(level) if (!logStream || level < logThreshold) return;
 
 void lprintln(LogLevel level, const char* str) {

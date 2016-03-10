@@ -47,7 +47,7 @@ nlContext* nlNewContext(int* err) {
 		goto abort;
 	}
 
-	// We allow the kernel to assign us an address in order to support multiple threads
+	// We let the kernel assign us an address to support multiple threads
 	ctx->localAddr.nl_family = AF_NETLINK;
 	ctx->localAddr.nl_groups = 0;
 	ctx->localAddr.nl_pad = 0;
@@ -103,13 +103,17 @@ static void nlCommitSpace(nlContext* ctx, size_t amount) {
 	ctx->msgBufferLen += amount;
 }
 
+static void nlResetSpace(nlContext* ctx, size_t initialCapacity) {
+	ctx->msgBufferLen = 0;
+	nlReserveSpace(ctx, initialCapacity);
+}
+
 static void* nlBufferTail(nlContext* ctx) {
 	return (char*)ctx->msgBuffer + ctx->msgBufferLen;
 }
 
 void nlInitMessage(nlContext* ctx, uint16_t msgType, uint16_t msgFlags) {
-	ctx->msgBufferLen = 0;
-	nlReserveSpace(ctx, NLMSG_SPACE(0));
+	nlResetSpace(ctx, NLMSG_SPACE(0));
 
 	ctx->attrDepth = 0;
 
@@ -188,10 +192,78 @@ int nlSendMessage(nlContext* ctx) {
 	ctx->iov.iov_base = ctx->nlmsg;
 	ctx->iov.iov_len = ctx->nlmsg->nlmsg_len;
 
-	errno = 0;
-	if (sendmsg(ctx->sock, &ctx->msg, 0) == -1) {
-		lprintf(LogError, "sendmsg err: %s\n", strerror(errno));
+	while (true) {
+		lprintf(LogDebug, "Sending netlink message %lu\n", ctx->nlmsg->nlmsg_seq);
+		errno = 0;
+		if (sendmsg(ctx->sock, &ctx->msg, 0) == -1) {
+			if (errno == EAGAIN || errno == EINTR) continue;
+			lprintf(LogError, "Error when sending netlink request to the kernel: %s\n", strerror(errno));
+			return errno;
+		} else break;
 	}
 
+	if (!(ctx->nlmsg->nlmsg_flags & NLM_F_ACK)) return 0;
+
+	// Cache sent information to prevent losing it when reusing the buffer
+	__u32 seq = ctx->nlmsg->nlmsg_seq;
+
+	// We reuse the send buffers for receiving to avoid extra allocations
+	nlResetSpace(ctx, 4096);
+	ctx->iov.iov_base = ctx->msgBuffer;
+	ctx->iov.iov_len = ctx->msgBufferCap;
+	struct sockaddr_nl fromAddr = { AF_NETLINK, 0, 0, 0 };
+	ctx->msg.msg_name = &fromAddr;
+
+	bool foundResponse = false;
+	while (!foundResponse) {
+		errno = 0;
+		int res = recvmsg(ctx->sock, &ctx->msg, 0);
+		if (res < 0) {
+			if (res == ENOBUFS) {
+				lprintln(LogWarning, "Kernel ran out of memory when sending netlink responses. View of state may be desynchronized, resulting in potential stalls!");
+				continue;
+			}
+			if (res == EAGAIN || errno == EINTR) continue;
+			lprintf(LogError, "Netlink socket read error: %s\n", strerror(errno));
+			return errno;
+		}
+		if (res == 0) {
+			lprintln(LogError, "Netlink socket was closed by the kernel");
+			return -1;
+		}
+		if (ctx->msg.msg_namelen != sizeof(fromAddr)) {
+			lprintln(LogError, "Netlink response used wrong address protocol");
+			return -1;
+		}
+
+		for (struct nlmsghdr* nlm = ctx->msgBuffer; NLMSG_OK(nlm, res); nlm = NLMSG_NEXT(nlm, res)) {
+			if (nlm->nlmsg_type == NLMSG_DONE) break;
+			if (nlm->nlmsg_seq != seq) {
+				// We ignore responses to previous messages, since we were not
+				// interested in the errors when the calls were made
+
+				if (foundResponse) {
+					lprintf(LogWarning, "Unexpected netlink message with sequence number %lu (the latest we sent was %lu)\n", nlm->nlmsg_seq, seq);
+				}
+				continue;
+			}
+			foundResponse = true;
+			if (nlm->nlmsg_type != NLMSG_ERROR) {
+				lprintf(LogError, "Unexpected netlink response type: %d\n", nlm->nlmsg_type);
+				return -1;
+			}
+			struct nlmsgerr* nlerr = NLMSG_DATA(nlm);
+			if (nlerr->error != 0) {
+				// Errors reported by the kernel are negative
+				lprintf(LogError, "Netlink-reported error: %s\n", strerror(-nlerr->error));
+				return -nlerr->error;
+			}
+		}
+	}
+	if (!foundResponse) {
+		lprintf(LogError, "Kernel did not acknowledge receipt of netlink message %d\n", seq);
+		return -1;
+	}
+	lprintf(LogDebug, "Kernel acknowledged netlink message %d\n", seq);
 	return 0;
 }
