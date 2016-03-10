@@ -3,6 +3,7 @@
 #include "net.h"
 
 #include <errno.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -23,6 +24,11 @@
 // The code has been written to be compatible with the named network namespace
 // approach defined by the iproute2 tools. For more information, see:
 //   http://www.linuxfoundation.org/collaborate/workgroups/networking/iproute2
+
+struct netContext_s {
+	int fd;
+	nlContext* nl;
+};
 
 static const char* NetNsDir = "/var/run/netns";
 
@@ -82,29 +88,30 @@ static int getNamespacePath(char* buffer, const char* name) {
 
 // This implementation is meant to be compatible with the "ip netns add"
 // command.
-int openNetNamespace(const char* name, int* err, bool excl) {
+netContext* netOpenNamespace(const char* name, int* err, bool excl) {
+	int localErr;
+	if (err == NULL) err = &localErr;
+
 	*err = setupNamespaceEnvironment();
-	if (*err != 0) return -1;
+	if (*err != 0) return NULL;
 
 	char netNsPath[PATH_MAX];
 	*err = getNamespacePath(netNsPath, name);
-	if (*err != 0) return -1;
+	if (*err != 0) return NULL;
 
-	lprintf(LogDebug, "Opening network namespace file at '%s'\n", netNsPath);
 	int nsFd;
-
 	while (true) {
 		if (!excl) {
 			errno = 0;
 			nsFd = open(netNsPath, O_RDONLY | O_CLOEXEC, 0);
-			if (nsFd != -1) return nsFd;
+			if (nsFd != -1) break;
 		}
 
 		nsFd = open(netNsPath, O_RDONLY | O_CLOEXEC | O_CREAT | (excl ? O_EXCL : 0), S_IRUSR | S_IRGRP | S_IROTH);
 		if (nsFd == -1) {
 			lprintf(LogError, "Failed to create network namespace file '%s': %s\n", netNsPath, strerror(errno));
 			*err = errno;
-			return -1;
+			return NULL;
 		}
 		close(nsFd);
 
@@ -131,13 +138,30 @@ int openNetNamespace(const char* name, int* err, bool excl) {
 		excl = false;
 	}
 
-	return nsFd;
+	nlContext* nl = nlNewContext(err);
+	if (nl == NULL) {
+		netDeleteNamespace(name);
+		return NULL;
+	}
+
+	netContext* ctx = malloc(sizeof(netContext));
+	ctx->fd = nsFd;
+	ctx->nl = nl;
+	lprintf(LogDebug, "Opened network namespace file at '%s' with context %p\n", netNsPath, ctx);
+	return ctx;
 abort:
 	unlink(netNsPath);
-	return errno;
+	*err = errno;
+	return NULL;
 }
 
-int deleteNetNamespace(const char* name) {
+void netFreeContext(netContext* ctx) {
+	close(ctx->fd);
+	nlFreeContext(ctx->nl);
+	free(ctx);
+}
+
+int netDeleteNamespace(const char* name) {
 	char netNsPath[PATH_MAX];
 	int res = getNamespacePath(netNsPath, name);
 	if (res != 0) return res;
@@ -159,75 +183,164 @@ int deleteNetNamespace(const char* name) {
 	return 0;
 }
 
-int switchNetNamespace(int nsFd) {
+int netSwitchContext(netContext* ctx) {
 	errno = 0;
+	int nsFd;
+	if (ctx != NULL) {
+		lprintf(LogDebug, "Switching to network namespace context %p\n", ctx);
+		nsFd = ctx->fd;
+	} else {
+		lprintf(LogDebug, "Switching to default network namespace\n");
+		nsFd = open("/proc/1/ns/net", O_RDONLY | O_CLOEXEC);
+		if (nsFd == -1) {
+			lprintf(LogError, "Failed to open init network namespace file: %s\n", strerror(errno));
+			return errno;
+		}
+	}
 	int res = setns(nsFd, CLONE_NEWNET);
-	close(nsFd);
 	if (res != 0) {
 		lprintf(LogError, "Failed to set active network namespace: %s\n", strerror(errno));
 		return errno;
 	}
+	if (ctx == NULL) close(nsFd);
 	return 0;
 }
 
-int switchNetNamespaceName(const char* name) {
-	char netNsPath[PATH_MAX];
-	if (name == NULL || name[0] == '\0') {
-		lprintf(LogDebug, "Switching to default network namespace\n");
-		strncpy(netNsPath, "/proc/1/ns/net", PATH_MAX-1);
-	} else {
-		int res = getNamespacePath(netNsPath, name);
-		if (res != 0) return res;
-		lprintf(LogDebug, "Switching to network namespace file at '%s'\n", netNsPath);
-	}
+int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, bool sync) {
+	lprintf(LogDebug, "Creating virtual ethernet pair (%p:'%s', %p:'%s')\n", ctx1, name1, ctx2, name2);
 
-	errno = 0;
-	int nsFd = open(netNsPath, O_RDONLY | O_CLOEXEC);
-	if (nsFd == -1) {
-		lprintf(LogError, "Failed to open network namespace file '%s': %s\n", netNsPath, strerror(errno));
-		return errno;
-	}
-	int res = switchNetNamespace(nsFd);
-	close(nsFd);
-	return res;
+	// The netlink socket used for this message does not matter, since we
+	// explicitly provide namespace file descriptors as part of the request.
+	nlContext* nl = ctx1->nl;
+
+	nlInitMessage(nl, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
+
+	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_change = ~0, .ifi_type = 0, .ifi_index = 0, .ifi_flags = 0 };
+	nlBufferAppend(nl, &ifi, sizeof(ifi));
+
+	nlPushAttr(nl, IFLA_IFNAME);
+		nlBufferAppend(nl, name1, strlen(name1)+1);
+	nlPopAttr(nl);
+
+	nlPushAttr(nl, IFLA_NET_NS_FD);
+		nlBufferAppend(nl, &ctx1->fd, sizeof(ctx1->fd));
+	nlPopAttr(nl);
+
+	nlPushAttr(nl, IFLA_LINKINFO);
+		nlPushAttr(nl, IFLA_INFO_KIND);
+			nlBufferAppend(nl, "veth", 4);
+		nlPopAttr(nl);
+		nlPushAttr(nl, IFLA_INFO_DATA);
+			nlPushAttr(nl, 1); // VETH_INFO_PEER
+				nlBufferAppend(nl, &ifi, sizeof(ifi));
+				nlPushAttr(nl, IFLA_IFNAME);
+					nlBufferAppend(nl, name2, strlen(name2)+1);
+				nlPopAttr(nl);
+				nlPushAttr(nl, IFLA_NET_NS_FD);
+					nlBufferAppend(nl, &ctx2->fd, sizeof(ctx2->fd));
+				nlPopAttr(nl);
+			nlPopAttr(nl);
+		nlPopAttr(nl);
+	nlPopAttr(nl);
+
+	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
-int createVethPair(nlContext* ctx, const char* name1, const char* name2, int ns1, int ns2, bool sync) {
-	nlInitMessage(ctx, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
+typedef struct {
+	const char* name;
+	int index;
+} getInterfaceState;
 
-	struct ifinfomsg ifi;
-	ifi.ifi_family = AF_UNSPEC;
-	ifi.ifi_type = 0;
-	ifi.ifi_index = 0;
-	ifi.ifi_flags = 0;
-	ifi.ifi_change = ~0;
+static int recordInterfaceIndex(const nlContext* ctx, const void* data, uint32_t len, uint16_t type, uint16_t flags, void* arg) {
+	getInterfaceState* state = arg;
 
-	nlBufferAppend(ctx, &ifi, sizeof(ifi));
+	const struct ifinfomsg* ifi = data;
+	if (type != RTM_NEWLINK) {
+		lprintf(LogError, "Unknown interface info response type %d in index response\n", ifi->ifi_type);
+		return -1;
+	}
 
-	nlPushAttr(ctx, IFLA_IFNAME);
-		nlBufferAppend(ctx, name1, strlen(name1)+1);
-	nlPopAttr(ctx);
+	int64_t remLen = len - sizeof(*ifi);
+	if (remLen < 0) {
+		lprintf(LogError, "Interface info response was truncated (%u bytes)\n", len);
+		return -1;
+	}
 
-	nlPushAttr(ctx, IFLA_NET_NS_FD);
-		nlBufferAppend(ctx, &ns1, sizeof(ns1));
-	nlPopAttr(ctx);
+	for (const struct rtattr* rta = (const struct rtattr*)((char*)data + NLMSG_LENGTH(sizeof(*ifi)) - NLMSG_LENGTH(0)); RTA_OK(rta, remLen); rta = RTA_NEXT(rta, remLen)) {
+		if (rta->rta_type == IFLA_IFNAME) {
+			size_t nameLen = strlen(state->name)+1;
+			if (nameLen > rta->rta_len || strncmp(state->name, RTA_DATA(rta), nameLen) != 0) {
+				lprintf(LogError, "Interface info response had the wrong identifier ('%s', expected '%s')\n", RTA_DATA(rta), state->name);
+				return -1;
+			}
+			state->index = ifi->ifi_index;
+			return 0;
+		}
+	}
+	lprintln(LogError, "Interface info response did not include an interface name.");
+	return -1;
+}
 
-	nlPushAttr(ctx, IFLA_LINKINFO);
-		nlPushAttr(ctx, IFLA_INFO_KIND);
-			nlBufferAppend(ctx, "veth", 4);
-		nlPopAttr(ctx);
-		nlPushAttr(ctx, IFLA_INFO_DATA);
-			nlPushAttr(ctx, 1); // VETH_INFO_PEER
-				nlBufferAppend(ctx, &ifi, sizeof(ifi));
-				nlPushAttr(ctx, IFLA_IFNAME);
-					nlBufferAppend(ctx, name2, strlen(name2)+1);
-				nlPopAttr(ctx);
-				nlPushAttr(ctx, IFLA_NET_NS_FD);
-					nlBufferAppend(ctx, &ns2, sizeof(ns2));
-				nlPopAttr(ctx);
-			nlPopAttr(ctx);
-		nlPopAttr(ctx);
-	nlPopAttr(ctx);
+int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
+	nlContext* nl = ctx->nl;
+	nlInitMessage(nl, RTM_GETLINK, 0);
 
-	return nlSendMessage(ctx);
+	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_change = ~0, .ifi_type = 0, .ifi_index = 0, .ifi_flags = 0 };
+	nlBufferAppend(nl, &ifi, sizeof(ifi));
+
+	nlPushAttr(nl, IFLA_IFNAME);
+		nlBufferAppend(nl, name, strlen(name)+1);
+	nlPopAttr(nl);
+
+	getInterfaceState state = {name, 0};
+	int res = nlSendMessage(nl, true, &recordInterfaceIndex, &state);
+	if (res != 0) {
+		lprintf(LogError, "Error while retrieving interface identifier for '%s': code %d\n", name, res);
+		if (err != NULL) *err = res;
+		return -1;
+	}
+
+	lprintf(LogDebug, "Interface %p:'%s' has index %d\n", ctx, name, state.index);
+	return state.index;
+}
+
+int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t subnetBits, uint32_t broadcastAddr, uint32_t anycastAddr, bool sync) {
+	if (subnetBits > 32) subnetBits = 32;
+
+	nlContext* nl = ctx->nl;
+	nlInitMessage(nl, RTM_NEWADDR, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
+
+	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = subnetBits, .ifa_index = devIdx, .ifa_flags = 0, .ifa_scope = 0 };
+	nlBufferAppend(nl, &ifa, sizeof(ifa));
+
+	if (addr > 0) {
+		nlPushAttr(nl, IFA_LOCAL);
+			nlBufferAppend(nl, &addr, sizeof(addr));
+		nlPopAttr(nl);
+		nlPushAttr(nl, IFA_ADDRESS);
+			nlBufferAppend(nl, &addr, sizeof(addr));
+		nlPopAttr(nl);
+	}
+	if (broadcastAddr > 0) {
+		nlPushAttr(nl, IFA_BROADCAST);
+			nlBufferAppend(nl, &addr, sizeof(addr));
+		nlPopAttr(nl);
+	}
+	if (anycastAddr > 0) {
+		nlPushAttr(nl, IFA_ANYCAST);
+			nlBufferAppend(nl, &addr, sizeof(addr));
+		nlPopAttr(nl);
+	}
+
+	return nlSendMessage(nl, true, NULL, NULL);
+}
+
+int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
+	nlContext* nl = ctx->nl;
+	nlInitMessage(nl, RTM_DELADDR, sync ? NLM_F_ACK : 0);
+
+	struct ifaddrmsg ifa = {.ifa_family = AF_INET, .ifa_index = devIdx, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
+	nlBufferAppend(nl, &ifa, sizeof(ifa));
+
+	return nlSendMessage(nl, true, NULL, NULL);
 }

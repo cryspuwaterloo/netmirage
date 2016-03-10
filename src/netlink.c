@@ -24,7 +24,7 @@ struct nlContext_s {
 	struct msghdr msg;
 	struct iovec iov;
 
-	// Raw buffer used to hold the message being constructed
+	// Raw buffer used to hold the message being constructed or received
 	union {
 		void* msgBuffer;
 		struct nlmsghdr* nlmsg;
@@ -183,7 +183,7 @@ int nlPopAttr(nlContext* ctx) {
 	return 0;
 }
 
-int nlSendMessage(nlContext* ctx) {
+int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, void* arg) {
 	if (ctx->attrDepth > 0) {
 		lprintf(LogError, "BUG: Attempted to send netlink packet with an rtattr depth of %d!\n", ctx->attrDepth);
 		return -1;
@@ -191,6 +191,15 @@ int nlSendMessage(nlContext* ctx) {
 	ctx->nlmsg->nlmsg_len = NLMSG_LENGTH((char*)nlBufferTail(ctx) - (char*)NLMSG_DATA(ctx->nlmsg));
 	ctx->iov.iov_base = ctx->nlmsg;
 	ctx->iov.iov_len = ctx->nlmsg->nlmsg_len;
+
+	// TODO
+	lprintf(LogDebug, "Sending:\n");
+	for (size_t i = 0; i < ctx->msgBufferLen; ++i) {
+		lprintDirectf(LogDebug, "%02X", (unsigned char)((char*)ctx->msgBuffer)[i]);
+		if (i % 4 == 3) lprintDirectf(LogDebug, " ");
+		if (i % 16 == 15) lprintDirectf(LogDebug, "\n");
+	}
+	lprintDirectf(LogDebug,"\n");
 
 	while (true) {
 		lprintf(LogDebug, "Sending netlink message %lu\n", ctx->nlmsg->nlmsg_seq);
@@ -202,7 +211,7 @@ int nlSendMessage(nlContext* ctx) {
 		} else break;
 	}
 
-	if (!(ctx->nlmsg->nlmsg_flags & NLM_F_ACK)) return 0;
+	if (!waitResponse) return 0;
 
 	// Cache sent information to prevent losing it when reusing the buffer
 	__u32 seq = ctx->nlmsg->nlmsg_seq;
@@ -236,33 +245,36 @@ int nlSendMessage(nlContext* ctx) {
 			return -1;
 		}
 
+		// TODO
+		lprintf(LogDebug, "Received:\n");
+		for (size_t i = 0; i < res; ++i) {
+			lprintDirectf(LogDebug, "%02X", (unsigned char)((char*)ctx->msgBuffer)[i]);
+			if (i % 4 == 3) lprintDirectf(LogDebug, " ");
+			if (i % 16 == 15) lprintDirectf(LogDebug, "\n");
+		}
+		lprintDirectf(LogDebug,"\n");
+
 		for (struct nlmsghdr* nlm = ctx->msgBuffer; NLMSG_OK(nlm, res); nlm = NLMSG_NEXT(nlm, res)) {
 			if (nlm->nlmsg_type == NLMSG_DONE) break;
 			if (nlm->nlmsg_seq != seq) {
 				// We ignore responses to previous messages, since we were not
 				// interested in the errors when the calls were made
-
-				if (foundResponse) {
-					lprintf(LogWarning, "Unexpected netlink message with sequence number %lu (the latest we sent was %lu)\n", nlm->nlmsg_seq, seq);
-				}
 				continue;
 			}
 			foundResponse = true;
-			if (nlm->nlmsg_type != NLMSG_ERROR) {
-				lprintf(LogError, "Unexpected netlink response type: %d\n", nlm->nlmsg_type);
-				return -1;
+			if (nlm->nlmsg_type == NLMSG_ERROR) {
+				struct nlmsgerr* nlerr = NLMSG_DATA(nlm);
+				if (nlerr->error != 0) {
+					// Errors reported by the kernel are negative
+					lprintf(LogError, "Netlink-reported error: %s\n", strerror(-nlerr->error));
+					return -nlerr->error;
+				}
 			}
-			struct nlmsgerr* nlerr = NLMSG_DATA(nlm);
-			if (nlerr->error != 0) {
-				// Errors reported by the kernel are negative
-				lprintf(LogError, "Netlink-reported error: %s\n", strerror(-nlerr->error));
-				return -nlerr->error;
+			if (handler != NULL) {
+				int userError = handler(ctx, NLMSG_DATA(nlm), NLMSG_PAYLOAD(nlm, 0), nlm->nlmsg_type, nlm->nlmsg_flags, arg);
+				if (userError != 0) return userError;
 			}
 		}
-	}
-	if (!foundResponse) {
-		lprintf(LogError, "Kernel did not acknowledge receipt of netlink message %d\n", seq);
-		return -1;
 	}
 	lprintf(LogDebug, "Kernel acknowledged netlink message %d\n", seq);
 	return 0;
