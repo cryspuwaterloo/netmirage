@@ -8,10 +8,14 @@
 #include <string.h>
 
 #include <fcntl.h>
+#include <linux/ethtool.h>
 #include <linux/limits.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/sockios.h>
+#include <net/if.h>
 #include <sched.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -27,6 +31,7 @@
 
 struct netContext_s {
 	int fd;
+	int ioctlFd;
 	nlContext* nl;
 };
 
@@ -139,16 +144,28 @@ netContext* netOpenNamespace(const char* name, int* err, bool excl) {
 	}
 
 	nlContext* nl = nlNewContext(err);
-	if (nl == NULL) {
-		netDeleteNamespace(name);
-		return NULL;
+	if (nl == NULL) goto deleteAbort;
+
+	// We need a socket descriptor specifically for ioctl in order to bind the
+	// calls to the correct net namespace. ioctl does not accept namespace bind
+	// file descriptors like the one stored in nsFd.
+	int ioctlFd = socket(AF_PACKET, SOCK_RAW, 0);
+	if (ioctlFd == -1) {
+		lprintf(LogError, "Failed to open ioctl socket: %s\n", strerror(errno));
+		goto freeDeleteAbort;
 	}
 
 	netContext* ctx = malloc(sizeof(netContext));
 	ctx->fd = nsFd;
+	ctx->ioctlFd = ioctlFd;
 	ctx->nl = nl;
 	lprintf(LogDebug, "Opened network namespace file at '%s' with context %p\n", netNsPath, ctx);
 	return ctx;
+freeDeleteAbort:
+	nlFreeContext(nl);
+deleteAbort:
+	netDeleteNamespace(name);
+	return NULL;
 abort:
 	unlink(netNsPath);
 	*err = errno;
@@ -157,6 +174,7 @@ abort:
 
 void netFreeContext(netContext* ctx) {
 	close(ctx->fd);
+	close(ctx->ioctlFd);
 	nlFreeContext(ctx->nl);
 	free(ctx);
 }
@@ -246,65 +264,40 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
-typedef struct {
-	const char* name;
-	int index;
-} getInterfaceState;
-
-static int recordInterfaceIndex(const nlContext* ctx, const void* data, uint32_t len, uint16_t type, uint16_t flags, void* arg) {
-	getInterfaceState* state = arg;
-
-	const struct ifinfomsg* ifi = data;
-	if (type != RTM_NEWLINK) {
-		lprintf(LogError, "Unknown interface info response type %d in index response\n", ifi->ifi_type);
-		return -1;
+static int sendIoCtl(netContext* ctx, const char* name, int command, struct ifreq* ifr) {
+	errno = 0;
+	int res = ioctl(ctx->ioctlFd, command, ifr);
+	if (res == -1) {
+		lprintf(LogError, "Error for ioctl command %d on interface %p:'%s': %s\n", command, ctx, name, strerror(errno));
+		return errno;
 	}
+	return 0;
+}
 
-	int64_t remLen = len - sizeof(*ifi);
-	if (remLen < 0) {
-		lprintf(LogError, "Interface info response was truncated (%u bytes)\n", len);
-		return -1;
-	}
+static int setSendIoCtl(netContext* ctx, const char* name, int command, void* data, struct ifreq* ifr) {
+	struct ifreq ifrLocal;
+	if (ifr == NULL) ifr = &ifrLocal;
 
-	for (const struct rtattr* rta = (const struct rtattr*)((char*)data + NLMSG_LENGTH(sizeof(*ifi)) - NLMSG_LENGTH(0)); RTA_OK(rta, remLen); rta = RTA_NEXT(rta, remLen)) {
-		if (rta->rta_type == IFLA_IFNAME) {
-			size_t nameLen = strlen(state->name)+1;
-			if (nameLen > rta->rta_len || strncmp(state->name, RTA_DATA(rta), nameLen) != 0) {
-				lprintf(LogError, "Interface info response had the wrong identifier ('%s', expected '%s')\n", RTA_DATA(rta), state->name);
-				return -1;
-			}
-			state->index = ifi->ifi_index;
-			return 0;
-		}
-	}
-	lprintln(LogError, "Interface info response did not include an interface name.");
-	return -1;
+	strncpy(ifr->ifr_name, name, IFNAMSIZ);
+	ifr->ifr_name[IFNAMSIZ-1] = '\0';
+	ifr->ifr_data = data;
+
+	return sendIoCtl(ctx, name, command, ifr);
 }
 
 int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
-	nlContext* nl = ctx->nl;
-	nlInitMessage(nl, RTM_GETLINK, 0);
+	struct ifreq ifr;
+	int res = setSendIoCtl(ctx, name, SIOCGIFINDEX, NULL, &ifr);
+	if (res != 0) return res;
 
-	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_change = ~0, .ifi_type = 0, .ifi_index = 0, .ifi_flags = 0 };
-	nlBufferAppend(nl, &ifi, sizeof(ifi));
-
-	nlPushAttr(nl, IFLA_IFNAME);
-		nlBufferAppend(nl, name, strlen(name)+1);
-	nlPopAttr(nl);
-
-	getInterfaceState state = {name, 0};
-	int res = nlSendMessage(nl, true, &recordInterfaceIndex, &state);
-	if (res != 0) {
-		lprintf(LogError, "Error while retrieving interface identifier for '%s': code %d\n", name, res);
-		if (err != NULL) *err = res;
-		return -1;
-	}
-
-	lprintf(LogDebug, "Interface %p:'%s' has index %d\n", ctx, name, state.index);
-	return state.index;
+	lprintf(LogDebug, "Interface %p:'%s' has index %d\n", ctx, name, ifr.ifr_ifindex);
+	return ifr.ifr_ifindex;
 }
 
 int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t subnetBits, uint32_t broadcastAddr, uint32_t anycastAddr, bool sync) {
+	// Using netlink for this task takes about 70% of the time that ioctl
+	// requires to set the address, subnet, and broadcast address.
+
 	if (subnetBits > 32) subnetBits = 32;
 
 	nlContext* nl = ctx->nl;
@@ -343,4 +336,31 @@ int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
 	nlBufferAppend(nl, &ifa, sizeof(ifa));
 
 	return nlSendMessage(nl, true, NULL, NULL);
+}
+
+int netSetInterfaceUp(netContext* ctx, const char* name, bool up) {
+	struct ifreq ifr;
+	int res = setSendIoCtl(ctx, name, SIOCGIFFLAGS, NULL, &ifr);
+	if (res != 0) return res;
+
+	if (up) ifr.ifr_flags |= IFF_UP;
+	else ifr.ifr_flags &= ~IFF_UP;
+
+	res = sendIoCtl(ctx, name, SIOCSIFFLAGS, &ifr);
+	if (res != 0) return res;
+
+	lprintf(LogDebug, "Brought %s interface %p:'%s'\n", up ? "up" : "down", ctx, name);
+	return 0;
+}
+
+int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled) {
+	struct ethtool_value ev;
+	ev.cmd = ETHTOOL_SGRO;
+	ev.data = enabled ? 1 : 0;
+
+	int res = setSendIoCtl(ctx, name, SIOCETHTOOL, &ev, NULL);
+	if (res != 0) return res;
+
+	lprintf(LogDebug, "Turned %s generic receive offload for interface %p:'%s'\n", enabled ? "on" : "off", ctx, name);
+	return 0;
 }

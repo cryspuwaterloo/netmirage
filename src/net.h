@@ -56,3 +56,11 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t 
 // addresses; this deletes only one of them. Returns 0 on success or an error
 // code otherwise.
 int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync);
+
+// Brings an interface up or shuts it down. Returns 0 on success or an error
+// code otherwise.
+int netSetInterfaceUp(netContext* ctx, const char* name, bool up);
+
+// Turns GRO (generic receive offload) on or off for an interface. Returns 0 on
+// success or an error code otherwise.
+int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
