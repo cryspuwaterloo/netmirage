@@ -73,3 +73,13 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
 // uses the traffic control default value. Returns 0 on success or an error code
 // otherwise.
 int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync);
+
+// Adds a static routing entry to the main routing table. The destination is
+// given by dstAddr with the subnetBits most significant bits specifying the
+// subnet. Packets are routed via the specified gatewayAddr. dstDevIdx
+// identifies the interface through which the packets should be sent. The
+// target gateway must be reachable when this command is executed. Moreover, the
+// all bits in dstAddr not covered by subnetBits should be set to 0. If
+// gatewayAddr is 0, then no gateway is used. Returns 0 on success or an error
+// code otherwise.
+int netAddRoute(netContext* ctx, uint32_t dstAddr, uint8_t subnetBits, uint32_t gatewayAddr, int dstDevIdx, bool sync);

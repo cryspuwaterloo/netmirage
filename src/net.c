@@ -435,3 +435,33 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
+
+int netAddRoute(netContext* ctx, uint32_t dstAddr, uint8_t subnetBits, uint32_t gatewayAddr, int dstDevIdx, bool sync) {
+	nlContext* nl = ctx->nl;
+	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
+
+	struct rtmsg rtm = { .rtm_src_len = 0, .rtm_tos = 0, .rtm_flags = 0 };
+	rtm.rtm_family = AF_INET;
+	rtm.rtm_dst_len = subnetBits;
+	rtm.rtm_table = RT_TABLE_MAIN;
+	rtm.rtm_protocol = RTPROT_STATIC;
+	rtm.rtm_scope = RT_SCOPE_UNIVERSE;
+	rtm.rtm_type = RTN_UNICAST;
+	nlBufferAppend(nl, &rtm, sizeof(rtm));
+
+	nlPushAttr(nl, RTA_DST);
+		nlBufferAppend(nl, &dstAddr, sizeof(dstAddr));
+	nlPopAttr(nl);
+
+	if (gatewayAddr != 0) {
+		nlPushAttr(nl, RTA_GATEWAY);
+			nlBufferAppend(nl, &gatewayAddr, sizeof(gatewayAddr));
+		nlPopAttr(nl);
+	}
+
+	nlPushAttr(nl, RTA_OIF);
+		nlBufferAppend(nl, &dstDevIdx, sizeof(dstDevIdx));
+	nlPopAttr(nl);
+
+	return nlSendMessage(nl, sync, NULL, NULL);
+}
