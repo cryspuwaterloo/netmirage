@@ -129,7 +129,7 @@ int main(int argc, char** argv) {
 	setLogThreshold(args.verbosity);
 
 	// Initialize subsystems
-	setNamespacePrefix(args.nsPrefix);
+	netInit(args.nsPrefix);
 
 	// Perform the actual work
 	if (!startupError) {

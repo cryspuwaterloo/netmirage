@@ -11,9 +11,9 @@
 
 typedef struct netContext_s netContext;
 
-// Sets the prefix to use for creating namespaces. Max length is theoretically
-// PATH_MAX-1.
-void setNamespacePrefix(const char* prefix);
+// Initializes the network configuration module. Max length ofr namespacePrefix
+// is thoeretically PATH_MAX-1. Returns 0 on success or an error code otherwise.
+int netInit(const char* namespacePrefix);
 
 // Creates a new namespace with the given name. Visible to "ip". Automatically
 // switches to the new namespace when called. Returns a context for the new
@@ -64,3 +64,12 @@ int netSetInterfaceUp(netContext* ctx, const char* name, bool up);
 // Turns GRO (generic receive offload) on or off for an interface. Returns 0 on
 // success or an error code otherwise.
 int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
+
+// Uses Linux Traffic Control to apply shaping to outgoing packets on an
+// interface. By default, interfaces have no delays or bandwidth limits.
+// lossRate should be a value between 0.0 and 1.0. Passing 0.0 for rateMbit
+// means that no limits are applied. queueLen specifies the maximum number of
+// packets in the queue before packets are dropped. A value of 0 for queueLen
+// uses the traffic control default value. Returns 0 on success or an error code
+// otherwise.
+int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync);

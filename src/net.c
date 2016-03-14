@@ -3,7 +3,9 @@
 #include "net.h"
 
 #include <errno.h>
+#include <math.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -11,6 +13,7 @@
 #include <linux/ethtool.h>
 #include <linux/limits.h>
 #include <linux/netlink.h>
+#include <linux/pkt_sched.h>
 #include <linux/rtnetlink.h>
 #include <linux/sockios.h>
 #include <net/if.h>
@@ -38,20 +41,10 @@ struct netContext_s {
 static const char* NetNsDir = "/var/run/netns";
 
 static char namespacePrefix[PATH_MAX];
-
-void setNamespacePrefix(const char* prefix) {
-	strncpy(namespacePrefix, prefix, PATH_MAX-1);
-	namespacePrefix[PATH_MAX-1] = '\0';
-}
+static double pschedTicksPerMs = 1.0;
 
 // Ensures that the network namespace folders exist and are mounted.
 static int setupNamespaceEnvironment() {
-	// We only bother initializing this once per execution. The lifetime of the
-	// process is such that if a race condition occurs, it's better to quit with
-	// an error rather than attempting to remount.
-	static bool initialized = false;
-	if (initialized) return 0;
-
 	errno = 0;
 	if (mkdir(NetNsDir, 0755) != 0 && errno != EEXIST) {
 		lprintf(LogError, "Could not create the system network namespace directory '%s': %s. Elevation may be required.\n", NetNsDir, strerror(errno));
@@ -79,7 +72,39 @@ static int setupNamespaceEnvironment() {
 		}
 	}
 
-	initialized = true;
+	return 0;
+}
+
+int netInit(const char* prefix) {
+	strncpy(namespacePrefix, prefix, PATH_MAX-1);
+	namespacePrefix[PATH_MAX-1] = '\0';
+
+	// We only bother initializing this once per execution. The lifetime of the
+	// process is such that if a race condition occurs, it's better to quit with
+	// an error rather than attempting to remount.
+	int err = setupNamespaceEnvironment();
+	if (err != 0) return err;
+
+	// Read the tick rate of the traffic control system. This is necessary
+	// because some calls use ticks as a unit of time. The information is
+	// exposed by the kernel in /proc/net/psched. The semantics of the data has
+	// gone through several revisions over the years, and much of the original
+	// meaning of parameters has been lost since Linux kernel version 2.6. We
+	// use the new interpretation of the parameters, unlike tc.
+	errno = 0;
+	FILE* fd = fopen("/proc/net/psched", "r");
+	if (fd == NULL) {
+		lprintf(LogError, "Could not open psched parameter file (/proc/net/psched): %s\n", strerror(errno));
+		return errno;
+	}
+	uint32_t unused, nsPerTick;
+	if (fscanf(fd, "%08x %08x ", &unused, &nsPerTick) < 2) {
+		lprintf(LogError, "Failed to read psched parameter file (/proc/net/psched)\n");
+	}
+	fclose(fd);
+	const double nsPerMs = 1000000.0;
+	pschedTicksPerMs = nsPerMs / nsPerTick;
+
 	return 0;
 }
 
@@ -96,9 +121,6 @@ static int getNamespacePath(char* buffer, const char* name) {
 netContext* netOpenNamespace(const char* name, int* err, bool excl) {
 	int localErr;
 	if (err == NULL) err = &localErr;
-
-	*err = setupNamespaceEnvironment();
-	if (*err != 0) return NULL;
 
 	char netNsPath[PATH_MAX];
 	*err = getNamespacePath(netNsPath, name);
@@ -325,7 +347,7 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t 
 		nlPopAttr(nl);
 	}
 
-	return nlSendMessage(nl, true, NULL, NULL);
+	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
 int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
@@ -363,4 +385,53 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled) {
 
 	lprintf(LogDebug, "Turned %s generic receive offload for interface %p:'%s'\n", enabled ? "on" : "off", ctx, name);
 	return 0;
+}
+
+int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync) {
+	// Default queue length declared in tc (q_netem.c). Not in headers.
+	const __u32 defaultQueueLen = 1000;
+
+	// Sanitize
+	if (lossRate < 0.0) lossRate = 0.0;
+	else if (lossRate > 1.0) lossRate = 1.0;
+	if (queueLen == 0) queueLen = defaultQueueLen;
+
+	// There are many ways to construct both latency and rate limiting with the
+	// Linux Traffic Control utility. Historically, the standard approach was to
+	// use HTB as the root qdisc and attach a leaf HTB class with a netem qdisc.
+	// The HTB class would handle the rate limiting, and netem the latency. A
+	// more recent approach was to use netem as the root qdisc and attach a TBF
+	// qdisc as a direct child. However, since Linux kernel version 3.3, netem
+	// has supported rate limiting on its own. Using netem directly for both
+	// rate limiting and latency has both performance and accuracy advantages.
+
+	nlContext* nl = ctx->nl;
+	nlInitMessage(nl, RTM_NEWQDISC, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
+
+	struct tcmsg tcm = { .tcm_family = AF_UNSPEC, .tcm_ifindex = devIdx, .tcm_handle = 0x00010000, .tcm_parent = TC_H_ROOT, .tcm_info = 0 };
+	nlBufferAppend(nl, &tcm, sizeof(tcm));
+
+	nlPushAttr(nl, TCA_KIND);
+		nlBufferAppend(nl, "netem", 6);
+	nlPopAttr(nl);
+
+	nlPushAttr(nl, TCA_OPTIONS);
+		struct tc_netem_qopt opt = { .gap = 0, .duplicate = 0 };
+		opt.latency = (__u32)round(delayMs * pschedTicksPerMs);
+		opt.jitter = (__u32)round(jitterMs * pschedTicksPerMs);
+		opt.limit = (queueLen > 0 ? queueLen : defaultQueueLen);
+		opt.loss = (__u32)round(lossRate * UINT32_MAX);
+		nlBufferAppend(nl, &opt, sizeof(opt));
+
+		if (rateMbit > 0.0) {
+			nlPushAttr(nl, TCA_NETEM_RATE);
+				struct tc_netem_rate rate = { .packet_overhead = 0, .cell_size = 0, .cell_overhead = 0 };
+				// Convert the rate from Mbit/s to byte/s
+				rate.rate = (__u32)round(1000.0 * 1000.0 / 8.0 * rateMbit);
+				nlBufferAppend(nl, &rate, sizeof(rate));
+			nlPopAttr(nl);
+		}
+	nlPopAttr(nl);
+
+	return nlSendMessage(nl, sync, NULL, NULL);
 }
