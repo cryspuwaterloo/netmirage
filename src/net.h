@@ -74,6 +74,10 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
 // otherwise.
 int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync);
 
+// Enables or disables packet routing between interfaces in the given namespace.
+// Returns 0 on success or an error code otherwise.
+int netSetForwarding(netContext* ctx, bool enabled);
+
 // Adds a static routing entry to the main routing table. The destination is
 // given by dstAddr with the subnetBits most significant bits specifying the
 // subnet. Packets are routed via the specified gatewayAddr. dstDevIdx

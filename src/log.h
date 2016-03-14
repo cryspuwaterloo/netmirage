@@ -36,3 +36,13 @@ void setLogThreshold(LogLevel level);
 
 // Terminates the logging subsystem
 void cleanupLog();
+
+// Efficiency macros. Use setLogThreshold rather than accessing logThreshold
+extern LogLevel logThreshold;
+#define PASSES_LOG_THRESHOLD(x) ((x) >= logThreshold)
+#define lprintln(level, ...) if (PASSES_LOG_THRESHOLD(level)) { lprintln(level, __VA_ARGS__); }
+#define lprintf(level, ...) if (PASSES_LOG_THRESHOLD(level)) { lprintf(level, __VA_ARGS__); }
+#define lvprintf(level, ...) if (PASSES_LOG_THRESHOLD(level)) { lvprintf(level, __VA_ARGS__); }
+#define lprintHead(level) if (PASSES_LOG_THRESHOLD(level)) { lprintHead(level); }
+#define lprintDirectf(level, ...) if (PASSES_LOG_THRESHOLD(level)) { lprintDirectf(level, __VA_ARGS__); }
+#define lvprintDirectf(level, ...) if (PASSES_LOG_THRESHOLD(level)) { lvprintDirectf(level, __VA_ARGS__); }

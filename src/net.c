@@ -38,7 +38,11 @@ struct netContext_s {
 	nlContext* nl;
 };
 
-static const char* NetNsDir = "/var/run/netns";
+static const char* NetNsDir             = "/var/run/netns";
+static const char* CurrentNsFile        = "/proc/self/ns/net";
+static const char* InitNsFile           = "/proc/1/ns/net";
+static const char* PschedParamFile      = "/proc/net/psched";
+static const char* ForwardingConfigFile = "/proc/sys/net/ipv4/ip_forward";
 
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
@@ -92,7 +96,7 @@ int netInit(const char* prefix) {
 	// meaning of parameters has been lost since Linux kernel version 2.6. We
 	// use the new interpretation of the parameters, unlike tc.
 	errno = 0;
-	FILE* fd = fopen("/proc/net/psched", "r");
+	FILE* fd = fopen(PschedParamFile, "r");
 	if (fd == NULL) {
 		lprintf(LogError, "Could not open psched parameter file (/proc/net/psched): %s\n", strerror(errno));
 		return errno;
@@ -155,7 +159,7 @@ netContext* netOpenNamespace(const char* name, int* err, bool excl) {
 		// is explicitly unmounted; there is no need to keep a dedicated process
 		// bound to it.
 		errno = 0;
-		if (mount("/proc/self/ns/net", netNsPath, "none", MS_BIND, NULL) != 0) {
+		if (mount(CurrentNsFile, netNsPath, "none", MS_BIND, NULL) != 0) {
 			lprintf(LogError, "Failed to bind new network namespace file '%s': %s\n", netNsPath, strerror(errno));
 			goto abort;
 		}
@@ -195,6 +199,7 @@ abort:
 }
 
 void netFreeContext(netContext* ctx) {
+	lprintf(LogDebug, "Releasing network context %p\n", ctx);
 	close(ctx->fd);
 	close(ctx->ioctlFd);
 	nlFreeContext(ctx->nl);
@@ -231,7 +236,7 @@ int netSwitchContext(netContext* ctx) {
 		nsFd = ctx->fd;
 	} else {
 		lprintf(LogDebug, "Switching to default network namespace\n");
-		nsFd = open("/proc/1/ns/net", O_RDONLY | O_CLOEXEC);
+		nsFd = open(InitNsFile, O_RDONLY | O_CLOEXEC);
 		if (nsFd == -1) {
 			lprintf(LogError, "Failed to open init network namespace file: %s\n", strerror(errno));
 			return errno;
@@ -317,6 +322,8 @@ int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
 }
 
 int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t subnetBits, uint32_t broadcastAddr, uint32_t anycastAddr, bool sync) {
+	lprintf(LogDebug, "Adding address to %p:%d: %08x/%u, broadcast %08x, anycast %08x\n", ctx, devIdx, addr, subnetBits, broadcastAddr, anycastAddr);
+
 	// Using netlink for this task takes about 70% of the time that ioctl
 	// requires to set the address, subnet, and broadcast address.
 
@@ -351,6 +358,8 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t 
 }
 
 int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
+	lprintf(LogDebug, "Deleting address from %p:%d\n", ctx, devIdx);
+
 	nlContext* nl = ctx->nl;
 	nlInitMessage(nl, RTM_DELADDR, sync ? NLM_F_ACK : 0);
 
@@ -361,6 +370,8 @@ int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
 }
 
 int netSetInterfaceUp(netContext* ctx, const char* name, bool up) {
+	lprintf(LogDebug, "Bringing %s interface %p:'%s'\n", up ? "up" : "down", ctx, name);
+
 	struct ifreq ifr;
 	int res = setSendIoCtl(ctx, name, SIOCGIFFLAGS, NULL, &ifr);
 	if (res != 0) return res;
@@ -371,11 +382,12 @@ int netSetInterfaceUp(netContext* ctx, const char* name, bool up) {
 	res = sendIoCtl(ctx, name, SIOCSIFFLAGS, &ifr);
 	if (res != 0) return res;
 
-	lprintf(LogDebug, "Brought %s interface %p:'%s'\n", up ? "up" : "down", ctx, name);
 	return 0;
 }
 
 int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled) {
+	lprintf(LogDebug, "Turning %s generic receive offload for interface %p:'%s'\n", enabled ? "on" : "off", ctx, name);
+
 	struct ethtool_value ev;
 	ev.cmd = ETHTOOL_SGRO;
 	ev.data = enabled ? 1 : 0;
@@ -383,7 +395,6 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled) {
 	int res = setSendIoCtl(ctx, name, SIOCETHTOOL, &ev, NULL);
 	if (res != 0) return res;
 
-	lprintf(LogDebug, "Turned %s generic receive offload for interface %p:'%s'\n", enabled ? "on" : "off", ctx, name);
 	return 0;
 }
 
@@ -395,6 +406,8 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	if (lossRate < 0.0) lossRate = 0.0;
 	else if (lossRate > 1.0) lossRate = 1.0;
 	if (queueLen == 0) queueLen = defaultQueueLen;
+
+	lprintf(LogDebug, "Setting egress shaping for interface %p:%d: delay %.0lfms, jitter %.0lfms, loss %.2lf, rate %.3lfMbit/s, queue len %lu\n", ctx, devIdx, delayMs, jitterMs, lossRate * 100.0, rateMbit, queueLen);
 
 	// There are many ways to construct both latency and rate limiting with the
 	// Linux Traffic Control utility. Historically, the standard approach was to
@@ -436,7 +449,29 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
+int netSetForwarding(netContext* ctx, bool enabled) {
+	lprintf(LogDebug, "Turning %s IP forwarding (routing) for namespace %p\n", enabled ? "on" : "off", ctx);
+
+	errno = 0;
+	int fd = open(ForwardingConfigFile, O_WRONLY);
+	if (fd == -1) return errno;
+
+	int res;
+	do {
+		errno = 0;
+		res = write(fd, enabled ? "1" : "0", 1);
+		if (res == -1) goto abort;
+	} while (res < 1);
+
+	errno = 0;
+abort:
+	close(fd);
+	return errno;
+}
+
 int netAddRoute(netContext* ctx, uint32_t dstAddr, uint8_t subnetBits, uint32_t gatewayAddr, int dstDevIdx, bool sync) {
+	lprintf(LogDebug, "Adding route for namespace %p: %08x/%u ==> interface %d via %sgateway %08X\n", ctx, dstAddr, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayAddr);
+
 	nlContext* nl = ctx->nl;
 	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
 
