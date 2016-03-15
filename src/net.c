@@ -1,3 +1,6 @@
+// See the GOTCHAS file for common issues and misconceptions related to this
+// module, or if the code stops working in a new kernel version.
+
 #define _GNU_SOURCE
 
 #include "net.h"
@@ -62,11 +65,11 @@ static int setupNamespaceEnvironment() {
 	while (!createdMount) {
 		errno = 0;
 		if (mount("", NetNsDir, "none", MS_SHARED | MS_REC, NULL) == 0) {
-			lprintf(LogDebug, "Created system network namespace directory\n");
+			lprintln(LogDebug, "Created system network namespace directory");
 			createdMount = true;
 		} else if (!madeBind && errno == EINVAL) {
 			errno = 0;
-			lprintf(LogDebug, "Bind mounting system network namespace directory\n");
+			lprintln(LogDebug, "Bind mounting system network namespace directory");
 			mount(NetNsDir, NetNsDir, "none", MS_BIND, NULL);
 			madeBind = true;
 		}
@@ -98,12 +101,12 @@ int netInit(const char* prefix) {
 	errno = 0;
 	FILE* fd = fopen(PschedParamFile, "r");
 	if (fd == NULL) {
-		lprintf(LogError, "Could not open psched parameter file (/proc/net/psched): %s\n", strerror(errno));
+		lprintf(LogError, "Could not open psched parameter file (%s): %s\n", PschedParamFile, strerror(errno));
 		return errno;
 	}
 	uint32_t unused, nsPerTick;
 	if (fscanf(fd, "%08x %08x ", &unused, &nsPerTick) < 2) {
-		lprintf(LogError, "Failed to read psched parameter file (/proc/net/psched)\n");
+		lprintf(LogError, "Failed to read psched parameter file (%s)\n", PschedParamFile);
 	}
 	fclose(fd);
 	const double nsPerMs = 1000000.0;
@@ -198,7 +201,7 @@ abort:
 	return NULL;
 }
 
-void netFreeContext(netContext* ctx) {
+void netCloseNamespace(netContext* ctx) {
 	lprintf(LogDebug, "Releasing network context %p\n", ctx);
 	close(ctx->fd);
 	close(ctx->ioctlFd);
@@ -228,14 +231,14 @@ int netDeleteNamespace(const char* name) {
 	return 0;
 }
 
-int netSwitchContext(netContext* ctx) {
+int netSwitchNamespace(netContext* ctx) {
 	errno = 0;
 	int nsFd;
 	if (ctx != NULL) {
 		lprintf(LogDebug, "Switching to network namespace context %p\n", ctx);
 		nsFd = ctx->fd;
 	} else {
-		lprintf(LogDebug, "Switching to default network namespace\n");
+		lprintln(LogDebug, "Switching to default network namespace");
 		nsFd = open(InitNsFile, O_RDONLY | O_CLOEXEC);
 		if (nsFd == -1) {
 			lprintf(LogError, "Failed to open init network namespace file: %s\n", strerror(errno));
@@ -449,8 +452,8 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
-int netSetForwarding(netContext* ctx, bool enabled) {
-	lprintf(LogDebug, "Turning %s IP forwarding (routing) for namespace %p\n", enabled ? "on" : "off", ctx);
+int netSetForwarding(bool enabled) {
+	lprintf(LogDebug, "Turning %s IP forwarding (routing) for the active namespace\n", enabled ? "on" : "off");
 
 	errno = 0;
 	int fd = open(ForwardingConfigFile, O_WRONLY);

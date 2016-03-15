@@ -4,15 +4,19 @@
 // networks. The functions are implemented using direct interaction with the
 // kernel, since they represent one of the most significant performance
 // bottlenecks. This module is not thread safe. Namespace changes will affect
-// the entire process.
+// the entire process. Some operations may be asynchronous or synchronous.
+// Asynchronous calls will not report kernel errors.
+
+// See the GOTCHAS file for common issues and misconceptions related to this
+// module, or if the code stops working in a new kernel version.
 
 #include <stdbool.h>
 #include <stdint.h>
 
 typedef struct netContext_s netContext;
 
-// Initializes the network configuration module. Max length ofr namespacePrefix
-// is thoeretically PATH_MAX-1. Returns 0 on success or an error code otherwise.
+// Initializes the network configuration module. Max length of namespacePrefix
+// is theoretically PATH_MAX-1. Returns 0 on success or an error code otherwise.
 int netInit(const char* namespacePrefix);
 
 // Creates a new namespace with the given name. Visible to "ip". Automatically
@@ -24,7 +28,7 @@ netContext* netOpenNamespace(const char* name, int* err, bool excl);
 
 // Frees resources associated with a context. This does not delete the
 // underlying namespace, or cause the active namespace to switch.
-void netFreeContext(netContext* ctx);
+void netCloseNamespace(netContext* ctx);
 
 // Deletes a namespace. Returns 0 on success. Any associated contexts should be
 // freed first. If the active namespace is deleted, the namespace will live
@@ -34,13 +38,10 @@ int netDeleteNamespace(const char* name);
 // Switches the active namespace for the process. If the context is NULL,
 // switches to the default network namespace for the PID namespace. Returns 0
 // on success or an error code otherwise.
-int netSwitchContext(netContext* ctx);
+int netSwitchNamespace(netContext* ctx);
 
-// The calls that use netlink can be asynchronous or synchronous. Asynchronous
-// calls will not report kernel errors.
-
-// Creates a virtual ethernet pair of interfaces with endpoints in the given
-// context namespaces.
+// Creates a virtual Ethernet pair of interfaces with endpoints in the given
+// namespaces.
 int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, bool sync);
 
 // Returns the interface index for an interface. On error, returns -1 and sets
@@ -74,9 +75,9 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
 // otherwise.
 int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync);
 
-// Enables or disables packet routing between interfaces in the given namespace.
-// Returns 0 on success or an error code otherwise.
-int netSetForwarding(netContext* ctx, bool enabled);
+// Enables or disables packet routing between interfaces in the active
+// namespace. Returns 0 on success or an error code otherwise.
+int netSetForwarding(bool enabled);
 
 // Adds a static routing entry to the main routing table. The destination is
 // given by dstAddr with the subnetBits most significant bits specifying the

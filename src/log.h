@@ -4,6 +4,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+// Terminates the logging system
+void logCleanup();
+
 typedef enum {
 	LogDebug,
 	LogInfo,
@@ -15,16 +18,13 @@ typedef enum {
 extern const char* LogLevelStrings[];
 
 // Configures the log to write to a file
-bool setLogFile(const char* filename);
+bool logSetFile(const char* filename);
 
 // Configures the log to write to a stream
-void setLogStream(FILE* output);
+void logSetStream(FILE* output);
 
 // Configures the log verbosity threshold
-void setLogThreshold(LogLevel level);
-
-// Terminates the logging subsystem
-void cleanupLog();
+void logSetThreshold(LogLevel level);
 
 // The logging system declares its print statements using macros. These macros
 // check the logging threshold in the caller before calling the actual printing

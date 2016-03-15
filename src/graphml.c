@@ -286,11 +286,11 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 			if (!id) graphFatalError(state, "Topology contained a node without an identifier.\n");
 			else {
 				copyXmlStr(&state->nodeId, id);
-				state->node.Id = (const char*)state->nodeId.data;
-				state->node.Client = (state->clientType != NULL ? false : true);
-				state->node.PacketLoss = 0.0;
-				state->node.BandwidthUp = 0;
-				state->node.BandwidthDown = 0;
+				state->node.id = (const char*)state->nodeId.data;
+				state->node.client = (state->clientType != NULL ? false : true);
+				state->node.packetLoss = 0.0;
+				state->node.bandwidthUp = 0;
+				state->node.bandwidthDown = 0;
 				state->mode = GpNode;
 			}
 		} else if (xmlStrEqual(name, (const xmlChar*)"edge")) {
@@ -316,12 +316,12 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 			else {
 				copyXmlStr(&state->linkSourceId, source);
 				copyXmlStr(&state->linkTargetId, target);
-				state->link.SourceId = (const char*)state->linkSourceId.data;
-				state->link.TargetId = (const char*)state->linkTargetId.data;
-				state->link.Latency = 0.0;
-				state->link.PacketLoss = 0.0;
-				state->link.Jitter = 0.0;
-				state->link.QueueLen = 0;
+				state->link.sourceId = (const char*)state->linkSourceId.data;
+				state->link.targetId = (const char*)state->linkTargetId.data;
+				state->link.latency = 0.0;
+				state->link.packetLoss = 0.0;
+				state->link.jitter = 0.0;
+				state->link.queueLen = 0;
 				state->mode = GpEdge;
 			}
 		} else unknown = true;
@@ -383,25 +383,25 @@ static void graphEndElement(void* ctx, const xmlChar* name) {
 		switch (state->dataMode) {
 		case GpNode:
 			if (state->nodeAttribs.typeId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.typeId)) {
-				state->node.Client = (xmlStrEqual(value, (const xmlChar*)"client"));
+				state->node.client = (xmlStrEqual(value, (const xmlChar*)"client"));
 			} else if (state->nodeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.packetLossId)) {
-				state->node.PacketLoss = strtod((const char*)value, NULL);
+				state->node.packetLoss = strtod((const char*)value, NULL);
 			} else if (state->nodeAttribs.bandwidthUpId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.bandwidthUpId)) {
-				state->node.BandwidthUp = strtod((const char*)value, NULL);
+				state->node.bandwidthUp = strtod((const char*)value, NULL);
 			} else if (state->nodeAttribs.bandwidthDownId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.bandwidthDownId)) {
-				state->node.BandwidthDown = strtod((const char*)value, NULL);
+				state->node.bandwidthDown = strtod((const char*)value, NULL);
 			}
 			break;
 
 		case GpEdge:
 			if (state->edgeAttribs.latencyId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.latencyId)) {
-				state->link.Latency = strtod((const char*)value, NULL);
+				state->link.latency = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.packetLossId)) {
-				state->link.PacketLoss = strtod((const char*)value, NULL);
+				state->link.packetLoss = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.jitterId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.jitterId)) {
-				state->link.Jitter = strtod((const char*)value, NULL);
+				state->link.jitter = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.queueLenId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.queueLenId)) {
-				state->link.QueueLen = (uint32_t)strtoul((const char*)value, NULL, 10);
+				state->link.queueLen = (uint32_t)strtoul((const char*)value, NULL, 10);
 			}
 			break;
 

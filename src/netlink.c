@@ -193,7 +193,7 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 	ctx->iov.iov_len = ctx->nlmsg->nlmsg_len;
 
 	// TODO
-	lprintf(LogDebug, "Sending:\n");
+	lprintln(LogDebug, "Sending:");
 	for (size_t i = 0; i < ctx->msgBufferLen; ++i) {
 		lprintDirectf(LogDebug, "%02X", (unsigned char)((char*)ctx->msgBuffer)[i]);
 		if (i % 4 == 3) lprintDirectf(LogDebug, " ");
@@ -246,7 +246,7 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 		}
 
 		// TODO
-		lprintf(LogDebug, "Received:\n");
+		lprintln(LogDebug, "Received:");
 		for (size_t i = 0; i < res; ++i) {
 			lprintDirectf(LogDebug, "%02X", (unsigned char)((char*)ctx->msgBuffer)[i]);
 			if (i % 4 == 3) lprintDirectf(LogDebug, " ");

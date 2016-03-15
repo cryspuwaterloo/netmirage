@@ -9,23 +9,23 @@
 
 // A node represents a client or AS in a network graph
 typedef struct {
-	const char* Id;
+	const char* id;
 
-	bool Client;
-	double PacketLoss;
-	double BandwidthUp;
-	double BandwidthDown;
+	bool client;
+	double packetLoss;
+	double bandwidthUp;
+	double bandwidthDown;
 } GraphNode;
 
 // A link represents a network connection between nodes
 typedef struct {
-	const char* SourceId;
-	const char* TargetId;
+	const char* sourceId;
+	const char* targetId;
 
-	double Latency;
-	double PacketLoss;
-	double Jitter;
-	uint32_t QueueLen;
+	double latency;
+	double packetLoss;
+	double jitter;
+	uint32_t queueLen;
 } GraphLink;
 
 // Callback for when nodes are read from the GraphML file.

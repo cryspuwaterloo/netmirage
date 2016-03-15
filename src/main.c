@@ -119,14 +119,14 @@ int main(int argc, char** argv) {
 
 	// Set up logging
 	if (args.logFile == NULL) {
-		setLogStream(stderr);
+		logSetStream(stderr);
 	} else {
-		if (!setLogFile(args.logFile)) {
+		if (!logSetFile(args.logFile)) {
 			fprintf(stderr, "Could not open custom log file '%s' for writing.\n", args.logFile);
 			startupError = true;
 		}
 	}
-	setLogThreshold(args.verbosity);
+	logSetThreshold(args.verbosity);
 
 	// Initialize subsystems
 	netInit(args.nsPrefix);
@@ -143,9 +143,10 @@ int main(int argc, char** argv) {
 	}
 	lprintln(LogInfo, "done");
 
+
 	// Cleanup
 	xmlCleanupParser();
-	cleanupLog();
+	logCleanup();
 
 	return 0;
 }

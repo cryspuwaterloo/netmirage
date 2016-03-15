@@ -13,12 +13,12 @@ static FILE* logStream;
 static bool closeLog;
 LogLevel _logThreshold;
 
-void setLogStream(FILE* output) {
+void logSetStream(FILE* output) {
 	logStream = output;
 	closeLog = false;
 }
 
-bool setLogFile(const char* filename) {
+bool logSetFile(const char* filename) {
 	FILE* fout = fopen(filename, "a");
 	if (!fout) return false;
 	logStream = fout;
@@ -26,7 +26,7 @@ bool setLogFile(const char* filename) {
 	return true;
 }
 
-void cleanupLog() {
+void logCleanup() {
 	if (closeLog) {
 		fclose(logStream);
 		logStream = NULL;
@@ -34,7 +34,7 @@ void cleanupLog() {
 	}
 }
 
-void setLogThreshold(LogLevel level) {
+void logSetThreshold(LogLevel level) {
 	_logThreshold = level;
 }
 

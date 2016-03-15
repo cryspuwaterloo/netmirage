@@ -1,0 +1,159 @@
+At the time of this writing (2016-03-15), the code in this project makes use of
+relatively new Linux kernel features. Many of these features are still
+undocumented, and thus subject to change at any time. Indeed, some of the kernel
+calls used in the program HAVE semantically changed in the past.
+
+This file outlines some common "gotchas" in the code, with the intention of
+serving as an aid should the code spontaneously break due to kernel changes.
+
+
+NETWORK NAMESPACES
+==================
+1. Basic operation and bind mounts
+----------------------------------
+Each process is associated with a single "active" network namespace. You can see
+the active namespace for the process with:
+	ls -l /proc/self/ns/net
+The "root" namespace is the default one associated with the init process:
+	ls -l /proc/1/ns/net
+A new namespace is created through the use of the "clone" or "unshare" calls
+with the CLONE_NEWNET flag. When called, the active namespace for the process
+will be set to a new one.
+
+There are several mechanisms for keeping network namespaces alive. Historically,
+the namespace's lifetime was bound to the life of the process that created it.
+No other processes could exist in the same namespace, so the initial process
+would be responsible for forking new processes. This is the technique that
+Mininet uses. The more recent approach is to use bind mounts—this is what the
+iproute2 code does.
+
+If the active namespace for the process (i.e., /proc/self/ns/net) is bind
+mounted to a destination file, there are several consequences. Firstly, the
+namespace lives until the destination file is unmounted (even if the process
+that created it changes its active namespace or terminates). Secondly, the file
+can be opened, yielding a file descriptor that "references" the associated
+namespace in a way that netlink can use. The file descriptor can also be used to
+switch the active namespace using the setns function. iproute2 places all of its
+bound namespace files in /var/run/net/netns; files placed here will be visible
+in the "ip netns list" command.
+
+To bind mount a namespace, one must perform the following precise steps:
+- Create a destination file
+- Close all file descriptors for the destination file (if left open, they will
+  interfere with later steps)
+- Run "mount --bind /proc/self/ns/net destfile" or the syscall equivalent
+- Open the destination file in read-only mode. This file descriptor can be used
+  with netlink calls or the setns syscall
+
+2. ioctl namespaces
+-------------------
+The ioctl function is another mechanism for interacting with the kernel. Some of
+the operations needed to set up a virtual network are performed through netlink
+(e.g., creating new veth pairs), while others must be performed through ioctl
+(e.g., brining up an interface). Some can be performed with either (e.g.,
+finding an interface's device index).
+
+At the time of this writing, most documentation for ioctl is wrong or misleading
+with respect to network namespaces. The first parameter to ioctl is a file
+descriptor. This file descriptor can be mostly anything, such as an unbound UDP
+socket, but must be valid. The file descriptor does not identify the device that
+is the target of the call—that information is given in the command-specific
+data. However, the file descriptor DOES implicitly identify the network
+namespace that the operation is performed within.
+
+The following fact is very important, so it is written on its own line:
+
+The namespace affected by the ioctl is the namespace that was active for the
+process when the socket associated with the file descriptor was opened. 
+
+NOTE: a file descriptor for an open namespace file (one that has been bind
+mounted using the method described above) is NOT a valid file descriptor for
+ioctl, even though it is the most natural one to use. 
+
+
+RTNETLINK
+=========
+1. Documentation
+----------------
+At the time of this writing, the documentation for netlink(7) and rtnetlink(7)
+is missing a lot of important details. To successfully implement the correct
+kernel calls, one should check the source code of iproute2. In the past, the
+libnetlink library that is part of iproute2 has served as the de facto standard
+for rtnetlink calls. The kernel and iproute2 have made changes in the past in
+ways that prevent each other from breaking, leading to a lot of incorrect or
+missing documentation and legacy code. A good debugging technique is to add a
+hex dump to the data passed to rtnl_talk and rtnl_wilddump_req_filter in
+libnetlink.c in order to see what data is being exchanged. Here is some code to
+do just that (modify it as appropriate):
+
+	fprintf(stderr, "Netlink send:\n");
+	for (size_t i = 0; i < n->nlmsg_len; ++i) {
+		fprintf(stderr, "%02X", (unsigned char)((char*)n)[i]);
+		if (i % 4 == 3) fprintf(stderr, " ");
+		if (i % 16 == 15) fprintf(stderr, "\n");
+	}
+	fprintf(stderr, "\n"); 
+
+
+2. ifi_change
+-------------
+The ifi_change parameter that is part of struct ifinfomsg (see rtnetlink(7)) has
+some incorrect documentation. The documentation says that it is unused and
+should be set to 0xFFFFFFFF. However, it *is* used: it is a mask that is applied
+to to the ifi_flags parameter. Bits that are 1 will be changed according to
+ifi_flags. Bits that are 0 will retain the value currently associated with the
+device during a modification.
+
+Unfortunately, iproute2 does not follow the documentation. It sets ifi_change to
+0 in all of its calls. This would normally prevent them from changing device
+flags, except that the kernel has an explicit test case for this event to handle
+iproute2's bug: if ifi_flags is set to 0, it is implicitly changed to
+0xFFFFFFFF. See the do_setlink function in net/core/rtnetlink.c in the kernel to
+observe this hack.
+
+
+3. ip_forward
+-------------
+A Linux IP stack will not forward packets between interfaces unless IP
+forwarding has been enabled in the kernel:
+	echo 1 > /proc/sys/net/ipv4/ip_forward
+This setting can be set per-namespace. The active namespace of the process that
+writes to the file is used to specify the namespace.
+
+
+TRAFFIC CONTROL
+===============
+1. Tick intervals
+-----------------
+Various parameters in traffic control structures (e.g., tc_netem_qopt) need to
+specify a time. The headers claim that these times are specified in
+microseconds, but this is untrue. Many of these parameters are actually
+specified in units of the packet scheduler tick interval.
+
+In order to convert real time measurements into the correct units, one must know
+how long the packet scheduler tick interval is. This information is indirectly
+published by the kernel in the /proc/net/psched file. The format of this file
+has changed over time, especially in kernel 2.6 (when the underlying technique
+for scheduling packets changed). At the time of this writing, the file contained
+the following four 8-digit hexadecimal values:
+- Number of nanoseconds in microseconds (always 1000)
+- Number of nanoseconds per packet scheduler tick
+- 1,000,000
+- Number of nanoseconds per second divided by the hrtimer resolution
+Prior to kernel 2.6, these parameters had different meanings. Their current
+values were chosen so that iproute2's "tc" tool continues to work without
+modification. Clearly, the length of a tick can be determined solely from the
+second value.
+
+The kernel code that generates the contents of this file is found in the
+psched_show function in net/sched/sch_api.c
+
+The iproute2 code that reads the contents of this file is found in tc_core_init
+in iproute2/tc/tc_core.c (although the file is also read in other locations as
+well; be sure to grep).
+
+2. Single namespace veth pair
+-----------------------------
+A veth pair that has both of its interfaces in the same network namespace will
+ignore all traffic control settings applied to it. This issue mostly affects
+developers during debugging and testing.
