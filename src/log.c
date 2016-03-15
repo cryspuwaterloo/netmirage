@@ -11,7 +11,7 @@ const char* LogLevelStrings[] = {"DEBUG", "INFO", "WARNING", "ERROR", NULL};
 
 static FILE* logStream;
 static bool closeLog;
-LogLevel logThreshold;
+LogLevel _logThreshold;
 
 void setLogStream(FILE* output) {
 	logStream = output;
@@ -35,31 +35,27 @@ void cleanupLog() {
 }
 
 void setLogThreshold(LogLevel level) {
-	logThreshold = level;
+	_logThreshold = level;
 }
 
-#undef lprintln
-void lprintln(LogLevel level, const char* str) {
-	lprintHead(level);
+void _lprintln(LogLevel level, const char* str) {
+	_lprintHead(level);
 	fprintf(logStream, "%s\n", str);
 }
 
-#undef lprintf
-void lprintf(LogLevel level, const char* fmt, ...) {
+void _lprintf(LogLevel level, const char* fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
-	lvprintf(level, fmt, args);
+	_lvprintf(level, fmt, args);
 	va_end(args);
 }
 
-#undef lvprintf
-void lvprintf(LogLevel level, const char* fmt, va_list args) {
-	lprintHead(level);
+void _lvprintf(LogLevel level, const char* fmt, va_list args) {
+	_lprintHead(level);
 	vfprintf(logStream, fmt, args);
 }
 
-#undef lprintHead
-void lprintHead(LogLevel level) {
+void _lprintHead(LogLevel level) {
 	// Generate timestamp
 	time_t epochTime;
 	time(&epochTime);
@@ -74,15 +70,13 @@ void lprintHead(LogLevel level) {
 	fprintf(logStream, "[%s] %s: ", timeStr, LogLevelStrings[level]);
 }
 
-#undef lprintDirectf
-void lprintDirectf(LogLevel level, const char* fmt, ...) {
+void _lprintDirectf(const char* fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
-	lvprintDirectf(level, fmt, args);
+	_lvprintDirectf(fmt, args);
 	va_end(args);
 }
 
-#undef lvprintDirectf
-void lvprintDirectf(LogLevel level, const char* fmt, va_list args) {
+void _lvprintDirectf(const char* fmt, va_list args) {
 	vfprintf(logStream, fmt, args);
 }
