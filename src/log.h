@@ -26,6 +26,8 @@ void logSetStream(FILE* output);
 // Configures the log verbosity threshold
 void logSetThreshold(LogLevel level);
 
+#define PASSES_LOG_THRESHOLD(x) ((x) >= _logThreshold)
+
 // The logging system declares its print statements using macros. These macros
 // check the logging threshold in the caller before calling the actual printing
 // functions. This prevents logging arguments from being evaluated at all if the
@@ -34,9 +36,8 @@ void logSetThreshold(LogLevel level);
 // raised. However, callers should make sure that they do not change program
 // state as part of the evaluation of logging function arguments.
 
-// Internal log threshold comparisons. Callers should use setLogThreshold.
+// Internal log threshold storage. Callers should use setLogThreshold.
 extern LogLevel _logThreshold;
-#define PASSES_LOG_THRESHOLD(x) ((x) >= _logThreshold)
 
 // Prints a line to the log
 #define lprintln(level, str) if (PASSES_LOG_THRESHOLD(level)) { _lprintln((level), (str)); }

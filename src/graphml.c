@@ -7,6 +7,7 @@
 #include <libxml/parser.h>
 
 #include "log.h"
+#include "topology.h"
 
 typedef struct {
 	size_t len;
@@ -94,9 +95,9 @@ typedef struct {
 	GraphParserMode dataMode;	// Mode to return to after parsing the data
 
 	// Node and link objects used to pass to the callers
-	GraphNode node;
+	GmlNode node;
 	xmlCharBuffer nodeId;
-	GraphLink link;
+	GmlLink link;
 	xmlCharBuffer linkSourceId;
 	xmlCharBuffer linkTargetId;
 
@@ -108,6 +109,7 @@ typedef struct {
 	void* userData;
 	NewNodeFunc newNodeFunc;
 	NewLinkFunc newLinkFunc;
+	int userError;
 } GraphParserState;
 
 // Prepend internal libxml errors
@@ -173,6 +175,7 @@ static void initGraphParserState(GraphParserState* state, NewNodeFunc newNode, N
 	initXmlCharBuffer(&state->linkTargetId);
 	state->partialError = false;
 	state->dead = false;
+	state->userError = 0;
 	memset(&state->nodeAttribs, 0, sizeof(state->nodeAttribs));
 	memset(&state->edgeAttribs, 0, sizeof(state->edgeAttribs));
 	xmlSetGenericErrorFunc(state, &showXmlError);
@@ -286,11 +289,11 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 			if (!id) graphFatalError(state, "Topology contained a node without an identifier.\n");
 			else {
 				copyXmlStr(&state->nodeId, id);
-				state->node.id = (const char*)state->nodeId.data;
-				state->node.client = (state->clientType != NULL ? false : true);
-				state->node.packetLoss = 0.0;
-				state->node.bandwidthUp = 0;
-				state->node.bandwidthDown = 0;
+				state->node.name = (const char*)state->nodeId.data;
+				state->node.t.client = (state->clientType != NULL ? false : true);
+				state->node.t.packetLoss = 0.0;
+				state->node.t.bandwidthUp = 0;
+				state->node.t.bandwidthDown = 0;
 				state->mode = GpNode;
 			}
 		} else if (xmlStrEqual(name, (const xmlChar*)"edge")) {
@@ -316,12 +319,12 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 			else {
 				copyXmlStr(&state->linkSourceId, source);
 				copyXmlStr(&state->linkTargetId, target);
-				state->link.sourceId = (const char*)state->linkSourceId.data;
-				state->link.targetId = (const char*)state->linkTargetId.data;
-				state->link.latency = 0.0;
-				state->link.packetLoss = 0.0;
-				state->link.jitter = 0.0;
-				state->link.queueLen = 0;
+				state->link.sourceName = (const char*)state->linkSourceId.data;
+				state->link.targetName = (const char*)state->linkTargetId.data;
+				state->link.t.latency = 0.0;
+				state->link.t.packetLoss = 0.0;
+				state->link.t.jitter = 0.0;
+				state->link.t.queueLen = 0;
 				state->mode = GpEdge;
 			}
 		} else unknown = true;
@@ -383,25 +386,25 @@ static void graphEndElement(void* ctx, const xmlChar* name) {
 		switch (state->dataMode) {
 		case GpNode:
 			if (state->nodeAttribs.typeId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.typeId)) {
-				state->node.client = (xmlStrEqual(value, (const xmlChar*)"client"));
+				state->node.t.client = (xmlStrEqual(value, (const xmlChar*)"client"));
 			} else if (state->nodeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.packetLossId)) {
-				state->node.packetLoss = strtod((const char*)value, NULL);
+				state->node.t.packetLoss = strtod((const char*)value, NULL);
 			} else if (state->nodeAttribs.bandwidthUpId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.bandwidthUpId)) {
-				state->node.bandwidthUp = strtod((const char*)value, NULL);
+				state->node.t.bandwidthUp = strtod((const char*)value, NULL);
 			} else if (state->nodeAttribs.bandwidthDownId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.bandwidthDownId)) {
-				state->node.bandwidthDown = strtod((const char*)value, NULL);
+				state->node.t.bandwidthDown = strtod((const char*)value, NULL);
 			}
 			break;
 
 		case GpEdge:
 			if (state->edgeAttribs.latencyId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.latencyId)) {
-				state->link.latency = strtod((const char*)value, NULL);
+				state->link.t.latency = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.packetLossId)) {
-				state->link.packetLoss = strtod((const char*)value, NULL);
+				state->link.t.packetLoss = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.jitterId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.jitterId)) {
-				state->link.jitter = strtod((const char*)value, NULL);
+				state->link.t.jitter = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.queueLenId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.queueLenId)) {
-				state->link.queueLen = (uint32_t)strtoul((const char*)value, NULL, 10);
+				state->link.t.queueLen = (uint32_t)strtoul((const char*)value, NULL, 10);
 			}
 			break;
 
@@ -413,12 +416,12 @@ static void graphEndElement(void* ctx, const xmlChar* name) {
 	}
 
 	case GpNode:
-		state->newNodeFunc(&state->node, state->userData);
+		state->userError = state->newNodeFunc(&state->node, state->userData);
 		state->mode = GpGraph;
 		break;
 
 	case GpEdge:
-		state->newLinkFunc(&state->link, state->userData);
+		state->userError = state->newLinkFunc(&state->link, state->userData);
 		state->mode = GpGraph;
 		break;
 
@@ -433,6 +436,10 @@ static void graphEndElement(void* ctx, const xmlChar* name) {
 		break;
 
 	default: graphFatalError(state, "BUG: Unknown GraphML parser state %d for endElement!\n", state->mode);
+	}
+
+	if (state->userError != 0) {
+		graphFatalError(state, "Terminating GraphML parsing due to client error code %d\n", state->userError);
 	}
 }
 
@@ -463,7 +470,7 @@ static xmlSAXHandler graphHandlers = {
 	fatalError: &showXmlError,
 };
 
-int parseGraph(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType) {
+int gmlParse(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType) {
 #ifdef LIBXML_PUSH_ENABLED
 	GraphParserState state;
 	initGraphParserState(&state, newNode, newLink, userData, clientType);
@@ -512,18 +519,26 @@ int parseGraph(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* user
 #endif
 }
 
-int parseGraphFile(const char* filename, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType) {
+// Determines the proper return value given a set of parsing errors
+static int reportErrors(const GraphParserState* state, int libXmlResult) {
+	if (state->userError != 0) return state->userError;
+	if (libXmlResult != 0) return libXmlResult;
+	if (state->dead) return 1;
+	return 0;
+}
+
+int gmlParseFile(const char* filename, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType) {
 	GraphParserState state;
 	initGraphParserState(&state, newNode, newLink, userData, clientType);
 	int result = xmlSAXUserParseFile(&graphHandlers, &state, filename);
 	cleanupGraphParserState(&state);
-	return result;
+	return reportErrors(&state, result);
 }
 
-int parseGraphMemory(char* buffer, int size, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType) {
+int gmlParseMemory(char* buffer, int size, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType) {
 	GraphParserState state;
 	initGraphParserState(&state, newNode, newLink, userData, clientType);
 	int result = xmlSAXUserParseMemory(&graphHandlers, &state, buffer, size);
 	cleanupGraphParserState(&state);
-	return result;
+	return reportErrors(&state, result);
 }

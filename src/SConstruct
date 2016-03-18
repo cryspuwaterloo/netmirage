@@ -42,20 +42,31 @@ with open('%s/version.c'%srcDir, 'w') as verFile:
 		const uint16_t getVersionRevision() { return %d; }
 	""" % (sneacVersion, sneacVersionMajor, sneacVersionMinor, sneacVersionRevision))
 
+Import('env')
+
 # Resolve libxml dependency
 try:
 	libXmlVersion = subprocess.check_output(['xml2-config', '--version']).strip()
+	libXmlFlags = subprocess.check_output(['xml2-config', '--cflags']).strip()
+	libXmlLibs = subprocess.check_output(['xml2-config', '--libs']).strip()
 except:
 	raise SCons.Errors.UserError, 'Could not locate libxml install location. Ensure that libxml is installed and xml2-config is in the system path.'
-libXmlFlags = subprocess.check_output(['xml2-config', '--cflags']).strip()
-libXmlLibs = subprocess.check_output(['xml2-config', '--libs']).strip()
 print 'Using libxml %s [flags = %s] [libs = %s]'%(libXmlVersion, libXmlFlags, libXmlLibs)
-
-# Build SNEAC
-Import('env')
-env.Append(CFLAGS = '-Wall -Werror -fmax-errors=10 -std=c11') 
 env.Append(CFLAGS = libXmlFlags)
 env.Append(LINKFLAGS = libXmlLibs)
+
+# Resolve glib dependency
+try:
+	glibFlags = subprocess.check_output(['pkg-config', '--cflags', 'glib-2.0']).strip()
+	glibLibs = subprocess.check_output(['pkg-config', '--libs', 'glib-2.0']).strip()
+except:
+	raise SCons.Errors.UserError, 'Could not locate GLib (GNOME Library) 2.0 install location. Ensure that glib is installed and visible to pkg-config.'
+print 'Using glib 2.0 [flags = %s] [libs = %s]'%(glibFlags, glibLibs)
+env.Append(CFLAGS = glibFlags)
+env.Append(LINKFLAGS = glibLibs)
+
+# Build SNEAC
+env.Append(CFLAGS = '-Wall -Werror -fmax-errors=10 -std=c99')
 env.Append(LINKFLAGS = '-lm')
 Import('target')
 sneac = env.Program(target, Glob('*.c'))

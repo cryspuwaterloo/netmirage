@@ -13,32 +13,22 @@
 
 #include "log.h"
 
-#define MAX_ATTR_NEST 10
-
-struct nlContext_s {
-	int sock;
-	uint32_t nextSeq;
-
-	struct sockaddr_nl localAddr;
-
-	struct msghdr msg;
-	struct iovec iov;
-
-	// Raw buffer used to hold the message being constructed or received
-	union {
-		void* msgBuffer;
-		struct nlmsghdr* nlmsg;
-	};
-	size_t msgBufferCap;
-	size_t msgBufferLen;
-
-	size_t attrNestPos[MAX_ATTR_NEST];
-	size_t attrDepth;
-};
+// Struct definition
+#include "netlink.inl"
 
 nlContext* nlNewContext(int* err) {
-	lprintln(LogDebug, "Opening rtnetlink socket");
 	nlContext* ctx = malloc(sizeof(nlContext));
+
+	int res = nlNewContextInPlace(ctx, false);
+	if (res == 0) return 0;
+
+	if (err) *err = res;
+	free(ctx);
+	return NULL;
+}
+
+int nlNewContextInPlace(nlContext* ctx, bool reusing) {
+	lprintln(LogDebug, "Opening rtnetlink socket");
 
 	errno = 0;
 	ctx->sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
@@ -64,29 +54,29 @@ nlContext* nlNewContext(int* err) {
 	}
 
 	ctx->nextSeq = 0;
-	ctx->msgBuffer = NULL;
-	ctx->msgBufferCap = 0;
-	ctx->msgBufferLen = 0;
+	if (!reusing) {
+		ctx->msgBuffer = NULL;
+		ctx->msgBufferCap = 0;
+		ctx->msgBufferLen = 0;
+	}
 
-	return ctx;
+	return 0;
 abort:
-	if (err) *err = errno;
 	if (ctx->sock != -1) close(ctx->sock);
-	free(ctx);
-	return NULL;
+	return errno;
 }
 
-int nlFreeContext(nlContext* ctx) {
-	lprintln(LogDebug, "Closing rtnetlink socket");
+void nlFreeContext(nlContext* ctx, bool inPlace) {
 	if (ctx->msgBuffer) free(ctx->msgBuffer);
-	errno = 0;
-	int res = close(ctx->sock);
-	free(ctx);
-	if (res == -1) {
-		lprintf(LogError, "Failed to close netlink socket: %s\n", strerror(errno));
-		return errno;
-	}
-	return 0;
+	if (!inPlace) free(ctx);
+}
+
+void nlInvalidateContext(nlContext* ctx) {
+	lprintln(LogDebug, "Closing rtnetlink socket");
+
+	// We do not free the message buffer so that it can be reused if requested
+
+	close(ctx->sock);
 }
 
 static struct sockaddr_nl kernelAddr = { AF_NETLINK, 0, 0, 0 };
@@ -192,15 +182,6 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 	ctx->iov.iov_base = ctx->nlmsg;
 	ctx->iov.iov_len = ctx->nlmsg->nlmsg_len;
 
-	// TODO
-	lprintln(LogDebug, "Sending:");
-	for (size_t i = 0; i < ctx->msgBufferLen; ++i) {
-		lprintDirectf(LogDebug, "%02X", (unsigned char)((char*)ctx->msgBuffer)[i]);
-		if (i % 4 == 3) lprintDirectf(LogDebug, " ");
-		if (i % 16 == 15) lprintDirectf(LogDebug, "\n");
-	}
-	lprintDirectf(LogDebug,"\n");
-
 	while (true) {
 		lprintf(LogDebug, "Sending netlink message %lu\n", ctx->nlmsg->nlmsg_seq);
 		errno = 0;
@@ -244,15 +225,6 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 			lprintln(LogError, "Netlink response used wrong address protocol");
 			return -1;
 		}
-
-		// TODO
-		lprintln(LogDebug, "Received:");
-		for (size_t i = 0; i < res; ++i) {
-			lprintDirectf(LogDebug, "%02X", (unsigned char)((char*)ctx->msgBuffer)[i]);
-			if (i % 4 == 3) lprintDirectf(LogDebug, " ");
-			if (i % 16 == 15) lprintDirectf(LogDebug, "\n");
-		}
-		lprintDirectf(LogDebug,"\n");
 
 		for (struct nlmsghdr* nlm = ctx->msgBuffer; NLMSG_OK(nlm, res); nlm = NLMSG_NEXT(nlm, res)) {
 			if (nlm->nlmsg_type == NLMSG_DONE) break;

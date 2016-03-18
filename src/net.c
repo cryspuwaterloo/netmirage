@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <linux/ethtool.h>
 #include <linux/limits.h>
@@ -25,6 +26,7 @@
 #include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "log.h"
@@ -35,11 +37,7 @@
 // approach defined by the iproute2 tools. For more information, see:
 //   http://www.linuxfoundation.org/collaborate/workgroups/networking/iproute2
 
-struct netContext_s {
-	int fd;
-	int ioctlFd;
-	nlContext* nl;
-};
+#include "net.inl"
 
 static const char* NetNsDir             = "/var/run/netns";
 static const char* CurrentNsFile        = "/proc/self/ns/net";
@@ -65,7 +63,7 @@ static int setupNamespaceEnvironment() {
 	while (!createdMount) {
 		errno = 0;
 		if (mount("", NetNsDir, "none", MS_SHARED | MS_REC, NULL) == 0) {
-			lprintln(LogDebug, "Created system network namespace directory");
+			lprintln(LogDebug, "Mounted system network namespace directory");
 			createdMount = true;
 		} else if (!madeBind && errno == EINVAL) {
 			errno = 0;
@@ -85,6 +83,14 @@ static int setupNamespaceEnvironment() {
 int netInit(const char* prefix) {
 	strncpy(namespacePrefix, prefix, PATH_MAX-1);
 	namespacePrefix[PATH_MAX-1] = '\0';
+
+	for (const char* p = namespacePrefix; *p; ++p) {
+		char c = *p;
+		if (!(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && c != '-' && c != '_') {
+			lprintf(LogError, "The network namespace prefix may only contain Arabic numerals, Latin letters, hyphens, and underscores. Disallowed character: %c\n", c);
+			return 1;
+		}
+	}
 
 	// We only bother initializing this once per execution. The lifetime of the
 	// process is such that if a race condition occurs, it's better to quit with
@@ -125,13 +131,22 @@ static int getNamespacePath(char* buffer, const char* name) {
 
 // This implementation is meant to be compatible with the "ip netns add"
 // command.
-netContext* netOpenNamespace(const char* name, int* err, bool excl) {
-	int localErr;
-	if (err == NULL) err = &localErr;
+netContext* netOpenNamespace(const char* name, bool excl, int* err) {
+	netContext* ctx = malloc(sizeof(netContext));
+	int res = netOpenNamespaceInPlace(ctx, false, name, excl);
+	if (res == 0) return ctx;
+
+	free(ctx);
+	if (err != NULL) *err = res;
+	return NULL;
+}
+
+int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, bool excl) {
+	int err;
 
 	char netNsPath[PATH_MAX];
-	*err = getNamespacePath(netNsPath, name);
-	if (*err != 0) return NULL;
+	err = getNamespacePath(netNsPath, name);
+	if (err != 0) return err;
 
 	int nsFd;
 	while (true) {
@@ -144,8 +159,7 @@ netContext* netOpenNamespace(const char* name, int* err, bool excl) {
 		nsFd = open(netNsPath, O_RDONLY | O_CLOEXEC | O_CREAT | (excl ? O_EXCL : 0), S_IRUSR | S_IRGRP | S_IROTH);
 		if (nsFd == -1) {
 			lprintf(LogError, "Failed to create network namespace file '%s': %s\n", netNsPath, strerror(errno));
-			*err = errno;
-			return NULL;
+			return errno;
 		}
 		close(nsFd);
 
@@ -172,8 +186,8 @@ netContext* netOpenNamespace(const char* name, int* err, bool excl) {
 		excl = false;
 	}
 
-	nlContext* nl = nlNewContext(err);
-	if (nl == NULL) goto deleteAbort;
+	errno = nlNewContextInPlace(&ctx->nl, false);
+	if (errno != 0) goto deleteAbort;
 
 	// We need a socket descriptor specifically for ioctl in order to bind the
 	// calls to the correct net namespace. ioctl does not accept namespace bind
@@ -184,29 +198,30 @@ netContext* netOpenNamespace(const char* name, int* err, bool excl) {
 		goto freeDeleteAbort;
 	}
 
-	netContext* ctx = malloc(sizeof(netContext));
 	ctx->fd = nsFd;
 	ctx->ioctlFd = ioctlFd;
-	ctx->nl = nl;
 	lprintf(LogDebug, "Opened network namespace file at '%s' with context %p\n", netNsPath, ctx);
-	return ctx;
+	return 0;
 freeDeleteAbort:
-	nlFreeContext(nl);
+	nlInvalidateContext(&ctx->nl);
 deleteAbort:
 	netDeleteNamespace(name);
-	return NULL;
+	return errno;
 abort:
 	unlink(netNsPath);
-	*err = errno;
-	return NULL;
+	return errno;
 }
 
-void netCloseNamespace(netContext* ctx) {
+void netCloseNamespace(netContext* ctx, bool inPlace) {
+	netInvalidateContext(ctx);
+	if (!inPlace) free(ctx);
+}
+
+void netInvalidateContext(netContext* ctx) {
 	lprintf(LogDebug, "Releasing network context %p\n", ctx);
 	close(ctx->fd);
 	close(ctx->ioctlFd);
-	nlFreeContext(ctx->nl);
-	free(ctx);
+	nlInvalidateContext(&ctx->nl);
 }
 
 int netDeleteNamespace(const char* name) {
@@ -219,8 +234,7 @@ int netDeleteNamespace(const char* name) {
 	// Lazy unmount preserves the namespace if it is still being used by others
 	errno = 0;
 	if (umount2(netNsPath, MNT_DETACH) != 0) {
-		lprintf(LogError, "Failed to unmount network namespace file '%s': %s. Elevation may be required.\n", netNsPath, strerror(errno));
-		return errno;
+		lprintf(LogWarning, "Failed to unmount network namespace file '%s': %s\n", netNsPath, strerror(errno));
 	}
 	errno = 0;
 	if (unlink(netNsPath) != 0) {
@@ -229,6 +243,42 @@ int netDeleteNamespace(const char* name) {
 	}
 
 	return 0;
+}
+
+int netEnumNamespaces(netNsCallback callback, void* userData) {
+	errno = 0;
+	DIR* d = opendir(NetNsDir);
+	if (d == NULL) return errno;
+
+	size_t compareLen = strlen(namespacePrefix);
+	struct dirent* ent;
+	while ((ent = readdir(d)) != NULL) {
+		if (strncmp(ent->d_name, namespacePrefix, compareLen) == 0) {
+			const char* name = ent->d_name + compareLen;
+
+			// Only report files
+			bool isFile;
+#ifdef _DIRENT_HAVE_D_TYPE
+			isFile = (ent->d_type == DT_REG);
+#else
+			struct stat s;
+			char netNsPath[PATH_MAX];
+			errno = getNamespacePath(netNsPath, name);
+			if (errno != 0) break;
+			errno = lstat(netNsPath, &s);
+			if (errno != 0) break;
+			isFile = ((s.st_mode & S_IFMT) == S_IFREG);
+#endif
+			if (isFile) {
+				errno = callback(name, userData);
+				if (errno != 0) break;
+			}
+		}
+	}
+	int err = errno; // Must capture errors from readdir and loop interior
+
+	closedir(d);
+	return err;
 }
 
 int netSwitchNamespace(netContext* ctx) {
@@ -259,7 +309,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 
 	// The netlink socket used for this message does not matter, since we
 	// explicitly provide namespace file descriptors as part of the request.
-	nlContext* nl = ctx1->nl;
+	nlContext* nl = &ctx1->nl;
 
 	nlInitMessage(nl, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
 
@@ -332,7 +382,7 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t 
 
 	if (subnetBits > 32) subnetBits = 32;
 
-	nlContext* nl = ctx->nl;
+	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_NEWADDR, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
 
 	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = subnetBits, .ifa_index = devIdx, .ifa_flags = 0, .ifa_scope = 0 };
@@ -363,7 +413,7 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t 
 int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
 	lprintf(LogDebug, "Deleting address from %p:%d\n", ctx, devIdx);
 
-	nlContext* nl = ctx->nl;
+	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_DELADDR, sync ? NLM_F_ACK : 0);
 
 	struct ifaddrmsg ifa = {.ifa_family = AF_INET, .ifa_index = devIdx, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
@@ -410,7 +460,14 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	else if (lossRate > 1.0) lossRate = 1.0;
 	if (queueLen == 0) queueLen = defaultQueueLen;
 
-	lprintf(LogDebug, "Setting egress shaping for interface %p:%d: delay %.0lfms, jitter %.0lfms, loss %.2lf, rate %.3lfMbit/s, queue len %lu\n", ctx, devIdx, delayMs, jitterMs, lossRate * 100.0, rateMbit, queueLen);
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		lprintHead(LogDebug);
+		lprintDirectf(LogDebug, "Setting egress shaping for interface %p:%d: delay %.0lfms, jitter %.0lfms, loss %.2lf", ctx, devIdx, delayMs, jitterMs, lossRate * 100.0);
+		if (rateMbit != 0.0) {
+			lprintDirectf(LogDebug, ", rate %.3lfMbit/s", rateMbit);
+		}
+		lprintDirectf(LogDebug, ", queue len %lu\n", queueLen);
+	}
 
 	// There are many ways to construct both latency and rate limiting with the
 	// Linux Traffic Control utility. Historically, the standard approach was to
@@ -421,7 +478,7 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	// has supported rate limiting on its own. Using netem directly for both
 	// rate limiting and latency has both performance and accuracy advantages.
 
-	nlContext* nl = ctx->nl;
+	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_NEWQDISC, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
 
 	struct tcmsg tcm = { .tcm_family = AF_UNSPEC, .tcm_ifindex = devIdx, .tcm_handle = 0x00010000, .tcm_parent = TC_H_ROOT, .tcm_info = 0 };
@@ -475,7 +532,7 @@ abort:
 int netAddRoute(netContext* ctx, uint32_t dstAddr, uint8_t subnetBits, uint32_t gatewayAddr, int dstDevIdx, bool sync) {
 	lprintf(LogDebug, "Adding route for namespace %p: %08x/%u ==> interface %d via %sgateway %08X\n", ctx, dstAddr, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayAddr);
 
-	nlContext* nl = ctx->nl;
+	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
 
 	struct rtmsg rtm = { .rtm_src_len = 0, .rtm_tos = 0, .rtm_flags = 0 };

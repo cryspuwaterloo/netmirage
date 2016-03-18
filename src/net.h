@@ -19,21 +19,38 @@ typedef struct netContext_s netContext;
 // is theoretically PATH_MAX-1. Returns 0 on success or an error code otherwise.
 int netInit(const char* namespacePrefix);
 
-// Creates a new namespace with the given name. Visible to "ip". Automatically
-// switches to the new namespace when called. Returns a context for the new
-// namespace on success, or NULL on error. If err is not NULL, it is set to the
-// error code on error. If an error occurs, the active namespace may no longer
-// be valid.
-netContext* netOpenNamespace(const char* name, int* err, bool excl);
+// Opens a namespace with the given name. If the namespace does not exist, it is
+// first created. If it already exists and excl is true, an error is raised.
+// Namespaces created this way are visible to iproute2. Automatically switches
+// to the namespace when called. Returns a context for the new namespace on
+// success, or NULL on error. If err is not NULL, it is set to the error code on
+// error. If an error occurs, the active namespace may no longer be valid.
+netContext* netOpenNamespace(const char* name, bool excl, int* err);
+
+// Opens a namespace using existing storage space. If reusing is false, then the
+// space is completely initialized. If reusing is true, then the context must
+// have been previously created with netOpenNamespace and subsequently
+// invalidated with netInvalidateContext. On success, this function has the same
+// effects as netOpenNamespace. Returns 0 on success or an error code otherwise.
+int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, bool excl);
+
+// Invalidates a context so that its memory can be reused to create a new one.
+void netInvalidateContext(netContext* ctx);
 
 // Frees resources associated with a context. This does not delete the
 // underlying namespace, or cause the active namespace to switch.
-void netCloseNamespace(netContext* ctx);
+void netCloseNamespace(netContext* ctx, bool inPlace);
 
 // Deletes a namespace. Returns 0 on success. Any associated contexts should be
 // freed first. If the active namespace is deleted, the namespace will live
 // until all bound processes are closed or switch to another namespace.
 int netDeleteNamespace(const char* name);
+
+// Enumerates all of the namespaces on the system matching the prefix. If
+// nsCallback returns a non-zero value, enumation is terminated and the value is
+// returned to the caller. Returns 0 on success.
+typedef int (*netNsCallback)(const char* name, void* userData);
+int netEnumNamespaces(netNsCallback callback, void* userData);
 
 // Switches the active namespace for the process. If the context is NULL,
 // switches to the default network namespace for the PID namespace. Returns 0

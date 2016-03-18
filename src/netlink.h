@@ -16,9 +16,19 @@ typedef struct nlContext_s nlContext;
 // cannot be changed.
 nlContext* nlNewContext(int* err);
 
+// Creates a new rtnetlink context using existing storage space. If reusing is
+// false, then the space is completely initialized. If reusing is true, then the
+// context must have been previously created with nlNewContext and subsequently
+// invalidated with nlInvalidateContext. Returns 0 on success or an error code
+// otherwise.
+int nlNewContextInPlace(nlContext* ctx, bool reusing);
+
+// Invalidates a context so that its memory can be reused to create a new one.
+void nlInvalidateContext(nlContext* ctx);
+
 // Frees a context. Calls made after freeing the context yield undefined
 // behavior.
-int nlFreeContext(nlContext* ctx);
+void nlFreeContext(nlContext* ctx, bool inPlace);
 
 // Initiates the construction of a new request packet. The contents of the
 // packet are modified by using the appending functions below. Once the contents

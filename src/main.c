@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <argp.h>
@@ -8,10 +9,7 @@
 
 #include "log.h"
 #include "version.h"
-#include "net.h"
-
-//TODO
-#include "graphml.h"
+#include "setup.h"
 
 // Argp version and help configuration
 void argpVersion(FILE* stream, struct argp_state* state) {
@@ -43,79 +41,102 @@ long matchArg(const char* arg, const char* options[], struct argp_state* state) 
 
 // Argument data recovered by argp
 static struct {
-	const char* topoFile;
+	bool cleanup;
 	LogLevel verbosity;
 	const char* logFile;
-	float bandwidthDivisor;
-	const char* weightKey;
-	const char* clientType;
-	const char* nsPrefix;
+
+	// Actual parameters for setup procedure
+	setupParams params;
+	setupGraphMLParams gmlParams;
 } args;
 
+// Divisors for GraphML bandwidths
 static const float ShadowDivisor = 125.f;    // KiB/s
 static const float ModelNetDivisor = 1000.f; // Kb/s
 
 // Argument parsing hook for argp
 error_t parseArg(int key, char* arg, struct argp_state* state) {
 	switch (key) {
-	case 'f': args.topoFile = arg; break;
-	case 'l': args.logFile = arg; break;
-	case 'w': args.weightKey = arg; break;
-	case 'c': args.clientType = arg; break;
-	case 'p': args.nsPrefix = arg; break;
+	case 'd': args.cleanup = true; break;
+	case 'f': args.params.srcFile = arg; break;
 
 	case 'v': {
 		args.verbosity = matchArg(arg, LogLevelStrings, state);
 		break;
 	}
+	case 'l': args.logFile = arg; break;
+
+	case 'p': args.params.nsPrefix = arg; break;
+
+	case 'm': args.params.softMemCap = (size_t)(1024.0 * 1024.0 * strtod(arg, NULL)); break;
 
 	case 'u': {
 		const char* options[] = {"shadow", "modelnet", "KiB", "Kb", NULL};
 		float divisors[] = {ShadowDivisor, ModelNetDivisor, ShadowDivisor, ModelNetDivisor};
 		long index = matchArg(arg, options, state);
-		args.bandwidthDivisor = divisors[index];
+		args.gmlParams.bandwidthDivisor = divisors[index];
 		break;
 	}
+	case 'w': args.gmlParams.weightKey = arg; break;
+	case 'c': args.gmlParams.clientType = arg; break;
+	case 's': args.gmlParams.twoPass = true; break;
 
 	default: return ARGP_ERR_UNKNOWN;
 	}
 	return 0;
 }
 
-//TODO
-void addNode(const GraphNode* node, void* userData) {}
-void addLink(const GraphLink* link, void* userData) {}
-
 int main(int argc, char** argv) {
 	// Initialize libxml and ensure that the shared object is correct version
 	LIBXML_TEST_VERSION
 
 	// Command-line switch definitions
-	struct argp_option options[] = {
-			{ "file",         'f', "FILE",                       0, "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
+	struct argp_option generalOptions[] = {
+			{ "destroy",      'd', NULL,                         OPTION_ARG_OPTIONAL, "If specified, any previous virtual network created by the program will be destroyed. If -f is not specified, the program terminates after deleting the network.", 0 },
+			{ "file",         'f', "FILE",                       0,                   "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
 
-			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output.", 1 },
-			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stdout.", 1 },
+			{ "verbosity",    'v', "{debug,info,warning,error}", 0,                   "Verbosity of log output.", 1 },
+			{ "log-file",     'l', "FILE",                       0,                   "Log output to FILE instead of stdout.", 1 },
 
-			{ "units",        'u', "{shadow,modelnet,KiB,Kb}",   0, "Specifies the bandwidth units used in the input file. Shadow uses KiB/s (the default), whereas ModelNet uses Kbit/s.", 2 },
-			{ "weight",       'w', "KEY",                        0, "Edge parameter to use for computing shortest paths for static routes. Must be a key used in the GraphML file (default: \"latency\").", 2},
-			{ "client-node",  'c', "TYPE",                       0, "Type of client nodes. Nodes in the GraphML file whose \"type\" attribute matches this value will be clients. If omitted, all nodes are clients.", 2},
+			{ "netns-prefix", 'p', "PREFIX",                     0,                   "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"sneac-\").", 2 },
 
-			{ "netns-prefix", 'p', "PREFIX",                     0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"sneac-\").", 3 },
+			{ "mem",          'm', "MiB",                        0,                   "Approximate maximum memory use, specified in MiB. The program may use more than this amount if needed.", 3 },
+
+			// File-specific options get priorities [50 - 99]
 
 			{ NULL },
 	};
-	struct argp argp = { options, &parseArg, NULL, "Sets up virtual networking infrastructure for a SNEAC core node." };
+	struct argp_option gmlOptions[] = {
+			{ "units",        'u', "{shadow,modelnet,KiB,Kb}", 0,                   "Specifies the bandwidth units used in the input file. Shadow uses KiB/s (the default), whereas ModelNet uses Kbit/s." },
+			{ "weight",       'w', "KEY",                      0,                   "Edge parameter to use for computing shortest paths for static routes. Must be a key used in the GraphML file (default: \"latency\")." },
+			{ "client-node",  'c', "TYPE",                     0,                   "Type of client nodes. Nodes in the GraphML file whose \"type\" attribute matches this value will be clients. If omitted, all nodes are clients." },
+			{ "scrambled",    's', NULL,                       OPTION_ARG_OPTIONAL, "This option must be specified if the GraphML file does not place all <node> tags before all <edge> tags. This option doubles the data retrieved from disk." },
+			{ NULL },
+	};
+	struct argp_option defaultDoc[] = { { "\n These options provide program documentation:", 0, NULL, OPTION_DOC | OPTION_NO_USAGE }, { NULL } };
+
+	struct argp gmlArgp = { gmlOptions, &parseArg };
+	struct argp defaultDocArgp = { defaultDoc };
+
+	struct argp_child children[] = {
+			{ &gmlArgp, 0, "These options apply specifically to GraphML files:\n", 50 },
+			{ &defaultDocArgp, 0, NULL, 100 },
+			{ NULL },
+	};
+	struct argp argp = { generalOptions, &parseArg, NULL, "Sets up virtual networking infrastructure for a SNEAC core node.", children };
 
 	// Defaults
+	args.cleanup = false;
 	args.verbosity = LogError;
-	args.bandwidthDivisor = ShadowDivisor;
-	args.weightKey = "latency";
-	args.nsPrefix = "sneac-";
+	args.params.nsPrefix = "sneac-";
+	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
+	args.gmlParams.bandwidthDivisor = ShadowDivisor;
+	args.gmlParams.weightKey = "latency";
+	args.gmlParams.twoPass = false;
 
 	// Parse arguments
 	argp_parse(&argp, argc, argv, 0, NULL, NULL);
-	bool startupError = false;
+	int err = 0;
 
 	// Set up logging
 	if (args.logFile == NULL) {
@@ -123,30 +144,38 @@ int main(int argc, char** argv) {
 	} else {
 		if (!logSetFile(args.logFile)) {
 			fprintf(stderr, "Could not open custom log file '%s' for writing.\n", args.logFile);
-			startupError = true;
+			err = 1;
 		}
 	}
 	logSetThreshold(args.verbosity);
 
-	// Initialize subsystems
-	netInit(args.nsPrefix);
+	if (err != 0) goto cleanup;
 
-	// Perform the actual work
-	if (!startupError) {
-		lprintln(LogInfo, "Starting SNEAC: The Large-Scale Network Emulator");
-		//TODO: move app logic to its own unit
-		if (args.topoFile) {
-			printf("%d\n", parseGraphFile(args.topoFile, &addNode, &addLink, NULL, args.clientType));
-		} else {
-			printf("%d\n", parseGraph(stdin, &addNode, &addLink, NULL, args.clientType));
-		}
+	lprintln(LogInfo, "Starting SNEAC: The Large-Scale Network Emulator");
+	err = setupInit(&args.params);
+	if (err != 0) goto cleanup;
+
+	if (args.cleanup) {
+		err = destroyNetwork(&args.params);
 	}
-	lprintln(LogInfo, "done");
 
+	if (err == 0 && (!args.cleanup || args.params.srcFile != NULL)) {
+		lprintln(LogInfo, "Beginning network construction");
+		err = setupGraphML(&args.gmlParams);
+	}
 
-	// Cleanup
+	if (err != 0) {
+		lprintf(LogError, "A fatal error occurred: code %d\n", err);
+		lprintln(LogWarning, "Attempting to destroy partially-constructed network");
+		destroyNetwork();
+	} else {
+		lprintln(LogInfo, "All operations completed successfully");
+	}
+
+	setupCleanup();
+cleanup:
 	xmlCleanupParser();
 	logCleanup();
 
-	return 0;
+	return err;
 }
