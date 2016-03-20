@@ -19,6 +19,9 @@ typedef struct netContext_s netContext;
 // is theoretically PATH_MAX-1. Returns 0 on success or an error code otherwise.
 int netInit(const char* namespacePrefix);
 
+// Frees all resources associated with the net subsystem
+void netCleanup(void);
+
 // Opens a namespace with the given name. If the namespace does not exist, it is
 // first created. If it already exists and excl is true, an error is raised.
 // Namespaces created this way are visible to iproute2. Automatically switches

@@ -26,7 +26,7 @@ bool logSetFile(const char* filename) {
 	return true;
 }
 
-void logCleanup() {
+void logCleanup(void) {
 	if (closeLog) {
 		fclose(logStream);
 		logStream = NULL;

@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/capability.h>
+
 #include "log.h"
 #include "net.h"
 #include "netcache.h"
@@ -29,18 +31,35 @@ static void interfaceName(nodeId sourceId, nodeId targetId, char* buffer) {
 static const char* RootName = "root";
 
 int workInit(const char* nsPrefix, uint64_t softMemCap) {
+	if (!CAP_IS_SUPPORTED(CAP_NET_ADMIN) || !CAP_IS_SUPPORTED(CAP_SYS_ADMIN)) {
+		lprintf(LogError, "The system does not support the required capabilities.");
+		return 1;
+	}
+
+	cap_t caps = cap_get_proc();
+	if (caps == NULL) goto restricted;
+	cap_flag_value_t capVal;
+	if (cap_get_flag(caps, CAP_NET_ADMIN, CAP_EFFECTIVE, &capVal) == -1 || capVal != CAP_SET) goto restricted;
+	if (cap_get_flag(caps, CAP_SYS_ADMIN, CAP_EFFECTIVE, &capVal) == -1 || capVal != CAP_SET) goto restricted;
+	cap_free(caps);
+
 	nc = ncNewCache(softMemCap);
 	rootNet = NULL;
 	return netInit(nsPrefix);
+restricted:
+	if (caps != NULL) cap_free(caps);
+	lprintln(LogError, "The worker process does not have authorization to perform its function. Please run the process with the CAP_NET_ADMIN and CAP_SYS_ADMIN capabilities (e.g., as root).")
+	return 1;
 }
 
-int workCleanup() {
+int workCleanup(void) {
 	if (rootNet) netCloseNamespace(rootNet, false);
+	netCleanup();
 	ncFreeCache(nc);
 	return 0;
 }
 
-int workAddRoot() {
+int workAddRoot(void) {
 	lprintf(LogDebug, "Creating a private 'root' namespace\n");
 
 	int err;
@@ -117,7 +136,7 @@ int workAddLink(nodeId sourceId, nodeId targetId, const TopoLink* link) {
 	return 0;
 }
 
-int workJoin() {
+int workJoin(void) {
 	return 0;
 }
 

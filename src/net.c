@@ -6,6 +6,7 @@
 #include "net.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -49,7 +50,7 @@ static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
 
 // Ensures that the network namespace folders exist and are mounted.
-static int setupNamespaceEnvironment() {
+static int setupNamespaceEnvironment(void) {
 	errno = 0;
 	if (mkdir(NetNsDir, 0755) != 0 && errno != EEXIST) {
 		lprintf(LogError, "Could not create the system network namespace directory '%s': %s. Elevation may be required.\n", NetNsDir, strerror(errno));
@@ -118,7 +119,13 @@ int netInit(const char* prefix) {
 	const double nsPerMs = 1000000.0;
 	pschedTicksPerMs = nsPerMs / nsPerTick;
 
+	nlInit();
+
 	return 0;
+}
+
+void netCleanup(void) {
+	nlCleanup();
 }
 
 // Computes the file path for a given namespace.
@@ -186,7 +193,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 		excl = false;
 	}
 
-	errno = nlNewContextInPlace(&ctx->nl, false);
+	errno = nlNewContextInPlace(&ctx->nl);
 	if (errno != 0) goto deleteAbort;
 
 	// We need a socket descriptor specifically for ioctl in order to bind the
@@ -313,7 +320,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 
 	nlInitMessage(nl, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
 
-	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_change = ~0, .ifi_type = 0, .ifi_index = 0, .ifi_flags = 0 };
+	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_change = UINT_MAX, .ifi_type = 0, .ifi_index = 0, .ifi_flags = 0 };
 	nlBufferAppend(nl, &ifi, sizeof(ifi));
 
 	nlPushAttr(nl, IFLA_IFNAME);
@@ -344,7 +351,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
-static int sendIoCtl(netContext* ctx, const char* name, int command, struct ifreq* ifr) {
+static int sendIoCtl(netContext* ctx, const char* name, unsigned long command, struct ifreq* ifr) {
 	errno = 0;
 	int res = ioctl(ctx->ioctlFd, command, ifr);
 	if (res == -1) {
@@ -354,7 +361,7 @@ static int sendIoCtl(netContext* ctx, const char* name, int command, struct ifre
 	return 0;
 }
 
-static int setSendIoCtl(netContext* ctx, const char* name, int command, void* data, struct ifreq* ifr) {
+static int setSendIoCtl(netContext* ctx, const char* name, unsigned long command, void* data, struct ifreq* ifr) {
 	struct ifreq ifrLocal;
 	if (ifr == NULL) ifr = &ifrLocal;
 
@@ -385,7 +392,7 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t 
 	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_NEWADDR, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
 
-	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = subnetBits, .ifa_index = devIdx, .ifa_flags = 0, .ifa_scope = 0 };
+	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = subnetBits, .ifa_index = (unsigned int)devIdx, .ifa_flags = 0, .ifa_scope = 0 };
 	nlBufferAppend(nl, &ifa, sizeof(ifa));
 
 	if (addr > 0) {
@@ -416,7 +423,7 @@ int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
 	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_DELADDR, sync ? NLM_F_ACK : 0);
 
-	struct ifaddrmsg ifa = {.ifa_family = AF_INET, .ifa_index = devIdx, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
+	struct ifaddrmsg ifa = {.ifa_family = AF_INET, .ifa_index = (unsigned int)devIdx, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
 	nlBufferAppend(nl, &ifa, sizeof(ifa));
 
 	return nlSendMessage(nl, true, NULL, NULL);
@@ -490,17 +497,17 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 
 	nlPushAttr(nl, TCA_OPTIONS);
 		struct tc_netem_qopt opt = { .gap = 0, .duplicate = 0 };
-		opt.latency = (__u32)round(delayMs * pschedTicksPerMs);
-		opt.jitter = (__u32)round(jitterMs * pschedTicksPerMs);
+		opt.latency = (__u32)llrint(delayMs * pschedTicksPerMs);
+		opt.jitter = (__u32)llrint(jitterMs * pschedTicksPerMs);
 		opt.limit = (queueLen > 0 ? queueLen : defaultQueueLen);
-		opt.loss = (__u32)round(lossRate * UINT32_MAX);
+		opt.loss = (__u32)llrint(lossRate * UINT32_MAX);
 		nlBufferAppend(nl, &opt, sizeof(opt));
 
 		if (rateMbit > 0.0) {
 			nlPushAttr(nl, TCA_NETEM_RATE);
 				struct tc_netem_rate rate = { .packet_overhead = 0, .cell_size = 0, .cell_overhead = 0 };
 				// Convert the rate from Mbit/s to byte/s
-				rate.rate = (__u32)round(1000.0 * 1000.0 / 8.0 * rateMbit);
+				rate.rate = (__u32)llrint(1000.0 * 1000.0 / 8.0 * rateMbit);
 				nlBufferAppend(nl, &rate, sizeof(rate));
 			nlPopAttr(nl);
 		}
@@ -516,7 +523,7 @@ int netSetForwarding(bool enabled) {
 	int fd = open(ForwardingConfigFile, O_WRONLY);
 	if (fd == -1) return errno;
 
-	int res;
+	ssize_t res;
 	do {
 		errno = 0;
 		res = write(fd, enabled ? "1" : "0", 1);

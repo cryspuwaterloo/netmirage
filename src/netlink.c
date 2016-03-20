@@ -16,10 +16,28 @@
 // Struct definition
 #include "netlink.inl"
 
+
+// Raw buffer used to hold the message being constructed or received. We share a
+// buffer for all contexts. Even if we did not do this, the module is already
+// not thread-safe because of namespaces being bound to the process. This way,
+// we don't need large buffers for each context.
+static union {
+	void* data;
+	struct nlmsghdr* nlmsg;
+} msgBuffer;
+static size_t msgBufferCap;
+static size_t msgBufferLen;
+
+void nlInit(void) {}
+
+void nlCleanup(void) {
+	if (msgBuffer.data != NULL) free(msgBuffer.data);
+}
+
 nlContext* nlNewContext(int* err) {
 	nlContext* ctx = malloc(sizeof(nlContext));
 
-	int res = nlNewContextInPlace(ctx, false);
+	int res = nlNewContextInPlace(ctx);
 	if (res == 0) return 0;
 
 	if (err) *err = res;
@@ -27,7 +45,7 @@ nlContext* nlNewContext(int* err) {
 	return NULL;
 }
 
-int nlNewContextInPlace(nlContext* ctx, bool reusing) {
+int nlNewContextInPlace(nlContext* ctx) {
 	lprintln(LogDebug, "Opening rtnetlink socket");
 
 	errno = 0;
@@ -54,11 +72,6 @@ int nlNewContextInPlace(nlContext* ctx, bool reusing) {
 	}
 
 	ctx->nextSeq = 0;
-	if (!reusing) {
-		ctx->msgBuffer = NULL;
-		ctx->msgBufferCap = 0;
-		ctx->msgBufferLen = 0;
-	}
 
 	return 0;
 abort:
@@ -67,39 +80,35 @@ abort:
 }
 
 void nlFreeContext(nlContext* ctx, bool inPlace) {
-	if (ctx->msgBuffer) free(ctx->msgBuffer);
 	if (!inPlace) free(ctx);
 }
 
 void nlInvalidateContext(nlContext* ctx) {
 	lprintln(LogDebug, "Closing rtnetlink socket");
-
-	// We do not free the message buffer so that it can be reused if requested
-
 	close(ctx->sock);
 }
 
 static struct sockaddr_nl kernelAddr = { AF_NETLINK, 0, 0, 0 };
 
 static void nlReserveSpace(nlContext* ctx, size_t amount) {
-	size_t capacity = ctx->msgBufferLen + amount;
-	if (ctx->msgBufferCap < capacity) {
-		ctx->msgBufferCap = capacity * 2;
-		ctx->msgBuffer = realloc(ctx->msgBuffer, ctx->msgBufferCap);
+	size_t capacity = msgBufferLen + amount;
+	if (msgBufferCap < capacity) {
+		msgBufferCap = capacity * 2;
+		msgBuffer.data = realloc(msgBuffer.data, msgBufferCap);
 	}
 }
 
 static void nlCommitSpace(nlContext* ctx, size_t amount) {
-	ctx->msgBufferLen += amount;
+	msgBufferLen += amount;
 }
 
 static void nlResetSpace(nlContext* ctx, size_t initialCapacity) {
-	ctx->msgBufferLen = 0;
+	msgBufferLen = 0;
 	nlReserveSpace(ctx, initialCapacity);
 }
 
 static void* nlBufferTail(nlContext* ctx) {
-	return (char*)ctx->msgBuffer + ctx->msgBufferLen;
+	return (char*)msgBuffer.data + msgBufferLen;
 }
 
 void nlInitMessage(nlContext* ctx, uint16_t msgType, uint16_t msgFlags) {
@@ -116,16 +125,16 @@ void nlInitMessage(nlContext* ctx, uint16_t msgType, uint16_t msgFlags) {
 	// nlmsg length and other lengths are set just before sending, since they
 	// are unknown at this point
 
-	ctx->nlmsg->nlmsg_type = msgType;
-	ctx->nlmsg->nlmsg_flags = NLM_F_REQUEST | msgFlags;
-	ctx->nlmsg->nlmsg_seq = ctx->nextSeq++;
-	ctx->nlmsg->nlmsg_pid = ctx->localAddr.nl_pid;
+	msgBuffer.nlmsg->nlmsg_type = msgType;
+	msgBuffer.nlmsg->nlmsg_flags = NLM_F_REQUEST | msgFlags;
+	msgBuffer.nlmsg->nlmsg_seq = ctx->nextSeq++;
+	msgBuffer.nlmsg->nlmsg_pid = ctx->localAddr.nl_pid;
 
 	// We don't link iov to nlmsg yet because the buffer may be reallocated
 	ctx->msg.msg_iov = &ctx->iov;
 	ctx->msg.msg_iovlen = 1;
 
-	nlCommitSpace(ctx, (char*)NLMSG_DATA(ctx->nlmsg) - (char*)ctx->nlmsg);
+	nlCommitSpace(ctx, (char*)NLMSG_DATA(msgBuffer.nlmsg) - (char*)msgBuffer.nlmsg);
 }
 
 void nlBufferAppend(nlContext* ctx, const void* buffer, size_t len) {
@@ -145,7 +154,7 @@ int nlPushAttr(nlContext* ctx, unsigned short type) {
 	struct rtattr* attr = nlBufferTail(ctx);
 	attr->rta_type = type;
 
-	ctx->attrNestPos[ctx->attrDepth] = ctx->msgBufferLen;
+	ctx->attrNestPos[ctx->attrDepth] = msgBufferLen;
 	++ctx->attrDepth;
 
 	nlCommitSpace(ctx, (char*)RTA_DATA(attr) - (char*)attr);
@@ -160,12 +169,12 @@ int nlPopAttr(nlContext* ctx) {
 	}
 
 	--ctx->attrDepth;
-	struct rtattr* attr = (struct rtattr*)((char*)ctx->msgBuffer + ctx->attrNestPos[ctx->attrDepth]);
+	struct rtattr* attr = (struct rtattr*)((char*)msgBuffer.data + ctx->attrNestPos[ctx->attrDepth]);
 
-	size_t payloadLen = (char*)nlBufferTail(ctx) - (char*)RTA_DATA(attr);
-	attr->rta_len = RTA_LENGTH(payloadLen);
+	size_t payloadLen = (size_t)((char*)nlBufferTail(ctx) - (char*)RTA_DATA(attr));
+	attr->rta_len = (unsigned short)RTA_LENGTH(payloadLen);
 
-	size_t paddingDeficit = RTA_SPACE(payloadLen) - ((char*)nlBufferTail(ctx) - (char*)attr);
+	size_t paddingDeficit = RTA_SPACE(payloadLen) - (size_t)((char*)nlBufferTail(ctx) - (char*)attr);
 	if (paddingDeficit > 0) {
 		nlReserveSpace(ctx, paddingDeficit);
 		nlCommitSpace(ctx, paddingDeficit);
@@ -178,12 +187,12 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 		lprintf(LogError, "BUG: Attempted to send netlink packet with an rtattr depth of %d!\n", ctx->attrDepth);
 		return -1;
 	}
-	ctx->nlmsg->nlmsg_len = NLMSG_LENGTH((char*)nlBufferTail(ctx) - (char*)NLMSG_DATA(ctx->nlmsg));
-	ctx->iov.iov_base = ctx->nlmsg;
-	ctx->iov.iov_len = ctx->nlmsg->nlmsg_len;
+	msgBuffer.nlmsg->nlmsg_len = (__u32)NLMSG_LENGTH((char*)nlBufferTail(ctx) - (char*)NLMSG_DATA(msgBuffer.nlmsg));
+	ctx->iov.iov_base = msgBuffer.nlmsg;
+	ctx->iov.iov_len = msgBuffer.nlmsg->nlmsg_len;
 
 	while (true) {
-		lprintf(LogDebug, "Sending netlink message %lu\n", ctx->nlmsg->nlmsg_seq);
+		lprintf(LogDebug, "Sending netlink message %lu\n", msgBuffer.nlmsg->nlmsg_seq);
 		errno = 0;
 		if (sendmsg(ctx->sock, &ctx->msg, 0) == -1) {
 			if (errno == EAGAIN || errno == EINTR) continue;
@@ -195,19 +204,19 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 	if (!waitResponse) return 0;
 
 	// Cache sent information to prevent losing it when reusing the buffer
-	__u32 seq = ctx->nlmsg->nlmsg_seq;
+	__u32 seq = msgBuffer.nlmsg->nlmsg_seq;
 
 	// We reuse the send buffers for receiving to avoid extra allocations
 	nlResetSpace(ctx, 4096);
-	ctx->iov.iov_base = ctx->msgBuffer;
-	ctx->iov.iov_len = ctx->msgBufferCap;
+	ctx->iov.iov_base = msgBuffer.data;
+	ctx->iov.iov_len = msgBufferCap;
 	struct sockaddr_nl fromAddr = { AF_NETLINK, 0, 0, 0 };
 	ctx->msg.msg_name = &fromAddr;
 
 	bool foundResponse = false;
 	while (!foundResponse) {
 		errno = 0;
-		int res = recvmsg(ctx->sock, &ctx->msg, 0);
+		ssize_t res = recvmsg(ctx->sock, &ctx->msg, 0);
 		if (res < 0) {
 			if (res == ENOBUFS) {
 				lprintln(LogWarning, "Kernel ran out of memory when sending netlink responses. View of state may be desynchronized, resulting in potential stalls!");
@@ -226,7 +235,7 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 			return -1;
 		}
 
-		for (struct nlmsghdr* nlm = ctx->msgBuffer; NLMSG_OK(nlm, res); nlm = NLMSG_NEXT(nlm, res)) {
+		for (struct nlmsghdr* nlm = msgBuffer.data; NLMSG_OK(nlm, res); nlm = NLMSG_NEXT(nlm, res)) {
 			if (nlm->nlmsg_type == NLMSG_DONE) break;
 			if (nlm->nlmsg_seq != seq) {
 				// We ignore responses to previous messages, since we were not

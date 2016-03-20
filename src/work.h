@@ -18,11 +18,11 @@
 int workInit(const char* nsPrefix, uint64_t softMemCap);
 
 // Frees all resources associated with the work subsystem.
-int workCleanup();
+int workCleanup(void);
 
 // Creates a network namespace called the "root", which provides connectivity to
 // the external world.
-int workAddRoot();
+int workAddRoot(void);
 
 // Creates a new virtual host in its own network namespace. If the node is a
 // client, then it is connected to the root.
@@ -37,4 +37,4 @@ int workAddLink(nodeId sourceId, nodeId targetId, const TopoLink* link);
 int workDestroyHosts(uint32_t* deletedHosts);
 
 // Waits until all submitted work has been completed and releases all resources.
-int workJoin();
+int workJoin(void);

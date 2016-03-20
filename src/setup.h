@@ -34,11 +34,11 @@ int setupInit(const setupParams* params);
 
 // Releases all setup-related resources. The program must not call any other
 // setup calls after this.
-int setupCleanup();
+int setupCleanup(void);
 
 // Sets up a virtual network from a GraphML topology. Returns 0 on success or an
 // error code otherwise.
 int setupGraphML(const setupGraphMLParams* gmlParams);
 
 // Destroys a previous network. Returns 0 on success or an error code otherwise.
-int destroyNetwork();
+int destroyNetwork(void);

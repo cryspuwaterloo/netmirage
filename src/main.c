@@ -1,3 +1,11 @@
+#include <linux/version.h>
+#ifndef __linux__
+#error "This program can only be compiled on Linux, since it uses Linux-specific networking features."
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
+#error "This program must be compiled with Linux kernel version 3.3 or later."
+#endif
+
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -12,14 +20,14 @@
 #include "setup.h"
 
 // Argp version and help configuration
-void argpVersion(FILE* stream, struct argp_state* state) {
+static void argpVersion(FILE* stream, struct argp_state* state) {
 	fprintf(stream, "%s\n", getVersionString());
 }
 void (*argp_program_version_hook)(FILE*, struct argp_state*) = &argpVersion;
 
 // Compares an argument to a list of possibilities and returns the matching
 // index. Errors if unmatched.
-long matchArg(const char* arg, const char* options[], struct argp_state* state) {
+static long matchArg(const char* arg, const char* options[], struct argp_state* state) {
 	if (arg[0]) {
 		// First try converting arg to an index
 		char* endptr;
@@ -55,7 +63,7 @@ static const float ShadowDivisor = 125.f;    // KiB/s
 static const float ModelNetDivisor = 1000.f; // Kb/s
 
 // Argument parsing hook for argp
-error_t parseArg(int key, char* arg, struct argp_state* state) {
+static error_t parseArg(int key, char* arg, struct argp_state* state) {
 	switch (key) {
 	case 'd': args.cleanup = true; break;
 	case 'f': args.params.srcFile = arg; break;
@@ -156,7 +164,7 @@ int main(int argc, char** argv) {
 	if (err != 0) goto cleanup;
 
 	if (args.cleanup) {
-		err = destroyNetwork(&args.params);
+		err = destroyNetwork();
 	}
 
 	if (err == 0 && (!args.cleanup || args.params.srcFile != NULL)) {

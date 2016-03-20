@@ -5,10 +5,15 @@
 #include <stdbool.h>
 
 // This module defines functions for sending and receiving rtnetlink messages.
+// This module is not thread-safe.
 
-// Individual contexts are not thread-safe, but multiple threads may use their
-// own contexts simultaneously.
 typedef struct nlContext_s nlContext;
+
+// Initializes the netlink subsystem
+void nlInit(void);
+
+// Frees all resources associated with the netlink subsystem
+void nlCleanup(void);
 
 // Creates a new rtnetlink context. Returns NULL on error, in which case *err
 // is set to the error code if it is provided. The netlink context implicitly
@@ -21,7 +26,7 @@ nlContext* nlNewContext(int* err);
 // context must have been previously created with nlNewContext and subsequently
 // invalidated with nlInvalidateContext. Returns 0 on success or an error code
 // otherwise.
-int nlNewContextInPlace(nlContext* ctx, bool reusing);
+int nlNewContextInPlace(nlContext* ctx);
 
 // Invalidates a context so that its memory can be reused to create a new one.
 void nlInvalidateContext(nlContext* ctx);
@@ -35,7 +40,8 @@ void nlFreeContext(nlContext* ctx, bool inPlace);
 // have been added, the message can be sent to the kernel. Callers should
 // specify NLM_F_ACK in the message flags if they intend to wait for an
 // acknowledgment. Any response message in the context is discarded by calling
-// this function.
+// this function. All contexts share a message buffer, and so message
+// construction cannot be interleaved between contexts.
 void nlInitMessage(nlContext* ctx, uint16_t msgType, uint16_t msgFlags);
 
 void nlBufferAppend(nlContext* ctx, const void* buffer, size_t len);

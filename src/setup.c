@@ -22,11 +22,11 @@ int setupInit(const setupParams* params) {
 	return workInit(params->nsPrefix, params->softMemCap);
 }
 
-int setupCleanup() {
+int setupCleanup(void) {
 	return workCleanup();
 }
 
-int destroyNetwork() {
+int destroyNetwork(void) {
 	lprintf(LogInfo, "Destroying any existing virtual network with namespace prefix '%s'\n", globalParams->nsPrefix);
 
 	uint32_t deletedHosts;

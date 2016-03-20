@@ -118,18 +118,18 @@ static void showXmlError(void* ctx, const char* msg, ...) {
 	va_start(args, msg);
 
 	// Render the message into memory so that we can examine its contents
-	const int defaultBufferSize = 255;
+	const size_t defaultBufferSize = 255;
 	char* errBuffer = malloc(defaultBufferSize);
 	int neededChars = vsnprintf(errBuffer, defaultBufferSize, msg, args);
-	if (neededChars >= defaultBufferSize) {
-		errBuffer = realloc(errBuffer, neededChars+1);
-		neededChars = vsnprintf(errBuffer, defaultBufferSize, msg, args);
-	}
-
-	// Redirect the error to our logging system
 	if (neededChars < 0) {
 		lprintf(LogError, "Could not display libxml error (code: %d)\n", neededChars);
 	} else {
+		if ((size_t)neededChars >= defaultBufferSize) {
+			errBuffer = realloc(errBuffer, (size_t)neededChars+1);
+			neededChars = vsnprintf(errBuffer, defaultBufferSize, msg, args);
+		}
+
+		// Redirect the error to our logging system
 		GraphParserState* state = (GraphParserState*)ctx;
 		if (!state->partialError) {
 			lprintHead(LogError);
@@ -227,18 +227,18 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 
 	case GpTopLevel:
 		if (xmlStrEqual(name, (const xmlChar*)"key")) {
-			const xmlChar* name = NULL;
+			const xmlChar* keyName = NULL;
 			const xmlChar* id = NULL;
 			const xmlChar* type = NULL;
 			const xmlChar* keyFor = NULL;
 			for (const xmlChar** att = atts; *att; att += 2) {
-				if (xmlStrEqual(att[0], (const xmlChar*)"attr.name")) name = att[1];
+				if (xmlStrEqual(att[0], (const xmlChar*)"attr.name")) keyName = att[1];
 				else if (xmlStrEqual(att[0], (const xmlChar*)"id")) id = att[1];
 				else if (xmlStrEqual(att[0], (const xmlChar*)"attr.type")) type = att[1];
 				else if (xmlStrEqual(att[0], (const xmlChar*)"for")) keyFor = att[1];
 			}
 
-			if (name && id && type && keyFor) {
+			if (keyName && id && type && keyFor) {
 				// Convenience macro used to record attribute identifiers.
 				// We store it explicitly rather than using a hash map for
 				// performance reasons.
@@ -454,7 +454,7 @@ static void graphCharacters(void* ctx, const xmlChar* ch, int len) {
 			state->dataValueCap = newSize * 2;
 			state->dataValue = realloc(state->dataValue, state->dataValueCap+1);
 		}
-		memcpy(&state->dataValue[state->dataValueLen], ch, len);
+		memcpy(&state->dataValue[state->dataValueLen], ch, (size_t)len);
 		state->dataValueLen = newSize;
 	}
 }
@@ -475,10 +475,10 @@ int gmlParse(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* userDa
 	GraphParserState state;
 	initGraphParserState(&state, newNode, newLink, userData, clientType);
 	xmlParserCtxtPtr xmlContext = NULL;
-	int xmlError = 0;
+	int err = 0;
 
 	// Read the input in chunks
-	const size_t chunkSize = 1024 * 8;
+	const size_t chunkSize = 1024 * 8; // Must fit in an int
 	size_t read;
 	char* buffer = malloc(chunkSize);
 	do {
@@ -487,28 +487,28 @@ int gmlParse(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* userDa
 			if (!xmlContext) {
 				// Initialize the context using the first chunk to detect the
 				// encoding
-				xmlContext = xmlCreatePushParserCtxt(&graphHandlers, &state, buffer, read, NULL);
+				xmlContext = xmlCreatePushParserCtxt(&graphHandlers, &state, buffer, (int)read, NULL);
 				if (!xmlContext) {
-					xmlError = -1;
+					err = -1;
 				} else {
 					xmlSetGenericErrorFunc(xmlContext, &showXmlError);
 				}
 			} else {
-				xmlError = xmlParseChunk(xmlContext, buffer, read, 0);
+				err = xmlParseChunk(xmlContext, buffer, (int)read, 0);
 			}
 		}
-	} while (read == chunkSize && !xmlError);
+	} while (read == chunkSize && !err);
 
 	// If there were no problems, terminate the reading
-	if (xmlContext && !xmlError) {
-		xmlError = xmlParseChunk(xmlContext, NULL, 0, 1);
+	if (xmlContext && !err) {
+		err = xmlParseChunk(xmlContext, NULL, 0, 1);
 	}
 	free(buffer);
 	cleanupGraphParserState(&state);
 
 	// Handle errors
 	int readError = ferror(input);
-	int error = readError ? readError : xmlError;
+	int error = readError ? readError : err;
 	if (error) {
 		lprintf(LogError, "Failed to parse the GraphML file (error: %d). The document may be malformed.", error);
 	}

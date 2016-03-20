@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 // Terminates the logging system
-void logCleanup();
+void logCleanup(void);
 
 typedef enum {
 	LogDebug,

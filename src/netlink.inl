@@ -22,14 +22,6 @@ struct nlContext_s {
 	struct msghdr msg;
 	struct iovec iov;
 
-	// Raw buffer used to hold the message being constructed or received
-	union {
-		void* msgBuffer;
-		struct nlmsghdr* nlmsg;
-	};
-	size_t msgBufferCap;
-	size_t msgBufferLen;
-
 	size_t attrNestPos[MAX_ATTR_NEST];
 	size_t attrDepth;
 };
