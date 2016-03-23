@@ -351,6 +351,14 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
+static void initIfReq(struct ifreq* ifr) {
+	// The kernel ignores unnecessary fields, so this is only useful for debug
+	// builds that are being profiled for pointers to unallocated data
+#ifdef DEBUG
+	memset(ifr, 0xCE, sizeof(struct ifreq));
+#endif
+}
+
 static int sendIoCtl(netContext* ctx, const char* name, unsigned long command, struct ifreq* ifr) {
 	errno = 0;
 	int res = ioctl(ctx->ioctlFd, command, ifr);
@@ -363,7 +371,10 @@ static int sendIoCtl(netContext* ctx, const char* name, unsigned long command, s
 
 static int setSendIoCtl(netContext* ctx, const char* name, unsigned long command, void* data, struct ifreq* ifr) {
 	struct ifreq ifrLocal;
-	if (ifr == NULL) ifr = &ifrLocal;
+	if (ifr == NULL) {
+		ifr = &ifrLocal;
+		initIfReq(&ifrLocal);
+	}
 
 	strncpy(ifr->ifr_name, name, IFNAMSIZ);
 	ifr->ifr_name[IFNAMSIZ-1] = '\0';
@@ -374,6 +385,7 @@ static int setSendIoCtl(netContext* ctx, const char* name, unsigned long command
 
 int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
 	struct ifreq ifr;
+	initIfReq(&ifr);
 	int res = setSendIoCtl(ctx, name, SIOCGIFINDEX, NULL, &ifr);
 	if (res != 0) return res;
 
@@ -433,6 +445,7 @@ int netSetInterfaceUp(netContext* ctx, const char* name, bool up) {
 	lprintf(LogDebug, "Bringing %s interface %p:'%s'\n", up ? "up" : "down", ctx, name);
 
 	struct ifreq ifr;
+	initIfReq(&ifr);
 	int res = setSendIoCtl(ctx, name, SIOCGIFFLAGS, NULL, &ifr);
 	if (res != 0) return res;
 

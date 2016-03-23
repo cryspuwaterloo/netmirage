@@ -6,6 +6,6 @@ def doBuild(name, target, cflags):
 	SConscript("src/SConstruct", variant_dir="build/"+name, duplicate=0)
 
 if int(ARGUMENTS.get('debug', 0)):
-	doBuild('debug', 'sneac-debug', '-g3')
+	doBuild('debug', 'sneac-debug', '-g3 -DDEBUG')
 else:
 	doBuild('release', 'sneac', '-O3')

@@ -93,8 +93,14 @@ static struct sockaddr_nl kernelAddr = { AF_NETLINK, 0, 0, 0 };
 static void nlReserveSpace(nlContext* ctx, size_t amount) {
 	size_t capacity = msgBufferLen + amount;
 	if (msgBufferCap < capacity) {
-		msgBufferCap = capacity * 2;
-		msgBuffer.data = realloc(msgBuffer.data, msgBufferCap);
+		size_t newCapacity = capacity * 2;
+		msgBuffer.data = realloc(msgBuffer.data, newCapacity);
+		#ifdef DEBUG
+			// Initialize memory for tools like valgrind, even though we
+			// carefully control the used portion of the buffer
+			memset((char*)msgBuffer.data + msgBufferCap, 0xCE, newCapacity - msgBufferCap);
+		#endif
+		msgBufferCap = newCapacity;
 	}
 }
 

@@ -51,6 +51,11 @@ extern LogLevel _logThreshold;
 #define lprintDirectf(level, fmt, ...) if (PASSES_LOG_THRESHOLD(level)) { _lprintDirectf((fmt), ##__VA_ARGS__); }
 #define lvprintDirectf(level, fmt, args) if (PASSES_LOG_THRESHOLD(level)) { _lvprintDirectf((fmt), (args)); }
 
+// Convenience functions that are often useful for logging operations. Similar
+// to the behavior of Linux's (v)asprintf.
+int newSprintf(char** buf, const char* fmt, ...);
+int newVsprintf(char** buf, const char* fmt, va_list args);
+
 // Internal implementations. These functions do not check the logging level.
 // Callers must not call these directly; they should use the macros instead.
 void _lprintln(LogLevel level, const char* str);

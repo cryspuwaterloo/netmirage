@@ -18,6 +18,7 @@ bool ip4GetAddr(const char* str, ip4Addr* addr);
 
 // Converts an IP address to a dot-decimal notation string. buffer must be at
 // least IP4_ADDR_BUFLEN long. Returns 0 on success or an error code otherwise.
+// In the event of an error, buffer is set to an error string.
 int ip4AddrToString(ip4Addr addr, char* buffer);
 
 typedef struct {
@@ -49,7 +50,8 @@ uint32_t ip4SubnetSize(const ip4Subnet* subnet);
 #define IP4_CIDR_BUFLEN (IP4_ADDR_BUFLEN + 1 + 2 + 1)
 
 // Converts a subnet to a CIDR notation string. buffer must be at least
-// IP4_CIDR_BUFLEN long. Returns 0 on success or an error code otherwise.
+// IP4_CIDR_BUFLEN long. Returns 0 on success or an error code otherwise. In the
+// event of an error, buffer is set to an error string.
 int ip4SubnetToString(const ip4Subnet* subnet, char* buffer);
 
 typedef struct ip4Iter_s ip4Iter;
@@ -90,3 +92,24 @@ bool ip4FragIterNext(ip4FragIter* it);
 void ip4FragIterSubnet(const ip4FragIter* it, ip4Subnet* fragment);
 
 void ip4FreeFragIter(ip4FragIter* it);
+
+// We also include MAC address functionality here. Even though, strictly
+// speaking, this applies only to the Ethernet layer, in this program the use of
+// MAC and IP addresses tends to be closely linked.
+
+#define MAC_ADDR_BYTES 6
+
+typedef struct {
+	uint8_t octets[MAC_ADDR_BYTES];
+} macAddr;
+
+// Converts a string in IEEE 802 notation into a MAC address. Returns true on
+// success or false if the string did not contain a valid address.
+bool macGetAddr(const char* str, macAddr* addr);
+
+// Size of a buffer required to hold a NUL-terminated MAC address string
+#define MAC_ADDR_BUFLEN (2*MAC_ADDR_BYTES + 5 + 1)
+
+// Converts a MAC address to a IEEE 802 notation string. buffer must be at least
+// MAC_ADDR_BUFLEN long.
+void macAddrToString(const macAddr* addr, char* buffer);

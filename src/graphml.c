@@ -118,17 +118,10 @@ static void showXmlError(void* ctx, const char* msg, ...) {
 	va_start(args, msg);
 
 	// Render the message into memory so that we can examine its contents
-	const size_t defaultBufferSize = 255;
-	char* errBuffer = malloc(defaultBufferSize);
-	int neededChars = vsnprintf(errBuffer, defaultBufferSize, msg, args);
-	if (neededChars < 0) {
-		lprintf(LogError, "Could not display libxml error (code: %d)\n", neededChars);
+	char* errBuffer;
+	if (newVsprintf(&errBuffer, msg, args) == -1) {
+		lprintln(LogError, "Could not display libxml error");
 	} else {
-		if ((size_t)neededChars >= defaultBufferSize) {
-			errBuffer = realloc(errBuffer, (size_t)neededChars+1);
-			neededChars = vsnprintf(errBuffer, defaultBufferSize, msg, args);
-		}
-
 		// Redirect the error to our logging system
 		GraphParserState* state = (GraphParserState*)ctx;
 		if (!state->partialError) {
@@ -142,9 +135,10 @@ static void showXmlError(void* ctx, const char* msg, ...) {
 		char* p;
 		for (p = errBuffer; *p; ++p);
 		state->partialError = (errBuffer[0] != '\0' && p[-1] != '\n');
+
+		free(errBuffer);
 	}
 
-	free(errBuffer);
 	va_end(args);
 }
 

@@ -7,6 +7,20 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
+
+#include "ip.h"
+
+typedef struct {
+	ip4Addr ip;            // The real IP address of the edge node
+	char* intf;            // The interface connected to the edge node
+
+	bool macSpecified;
+	macAddr mac;           // The real MAC address of the edge node
+
+	bool vsubnetSpecified;
+	ip4Subnet vsubnet;     // The subnet for virtual clients in the edge node
+} edgeNodeParams;
 
 typedef struct {
 	const char* nsPrefix; // Prefix for network namespaces
@@ -14,6 +28,14 @@ typedef struct {
 	// srcFile is the path to a file containing the network topology in the
 	// appropriate format. If it is NULL, then stdin is used instead.
 	const char* srcFile;
+
+	edgeNodeParams* edgeNodes;
+	size_t edgeNodeCount;
+	struct {
+		bool intfSpecified;
+		const char* intf;
+		ip4Subnet globalVSubnet;
+	} edgeNodeDefaults;
 
 	uint64_t softMemCap; // (Very) approximate memory use
 } setupParams;

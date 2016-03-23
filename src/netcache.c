@@ -68,7 +68,11 @@ netContext* ncOpenNamespace(netCache* cache, nodeId id, const char* name, bool e
 	gpointer val = g_hash_table_lookup(cache->map, key);
 	if (val != NULL) { // Found in hash table
 		ncNode* node = val;
-		netSwitchNamespace(&node->ctx);
+		int res = netSwitchNamespace(&node->ctx);
+		if (res != 0) {
+			if (err != NULL) *err = res;
+			return NULL;
+		}
 		return &node->ctx;
 	}
 

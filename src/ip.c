@@ -32,6 +32,7 @@ int ip4AddrToString(ip4Addr addr, char* buffer) {
 	errno = 0;
 	if (inet_ntop(AF_INET, &inAddr, buffer, IP4_ADDR_BUFLEN) == NULL) {
 		lprintf(LogError, "Could not convert IPv4 address to string: %s\n", strerror(errno));
+		strcpy(buffer, "(bad ip)");
 		return errno;
 	}
 	return 0;
@@ -91,9 +92,15 @@ uint32_t ip4SubnetSize(const ip4Subnet* subnet) {
 int ip4SubnetToString(const ip4Subnet* subnet, char* buffer) {
 	char ip[IP4_ADDR_BUFLEN];
 	int res = ip4AddrToString(subnet->addr, ip);
-	if (res != 0) return res;
+	if (res != 0) {
+		strcpy(buffer, ip); // IP error message
+		return res;
+	}
 	res = snprintf(buffer, IP4_CIDR_BUFLEN, "%s/%u", ip, subnet->prefixLen);
-	if (res < 0 || res >= IP4_CIDR_BUFLEN) return ENOSPC;
+	if (res < 0 || res >= IP4_CIDR_BUFLEN) {
+		strcpy(buffer, "(print fail)");
+		return ENOSPC;
+	}
 	return 0;
 }
 
@@ -244,4 +251,19 @@ void ip4FragIterSubnet(const ip4FragIter* it, ip4Subnet* fragment) {
 
 void ip4FreeFragIter(ip4FragIter* it) {
 	free(it);
+}
+
+bool macGetAddr(const char* str, macAddr* addr) {
+	int octets[MAC_ADDR_BYTES];
+	char overflow;
+	int foundOctets = sscanf(str, "%02x:%02x:%02x:%02x:%02x:%02x%c", &octets[0], &octets[1], &octets[2], &octets[3], &octets[4], &octets[5], &overflow);
+	if (foundOctets != MAC_ADDR_BYTES) return false;
+	for (int i = 0; i < MAC_ADDR_BYTES; ++i) {
+		addr->octets[i] = (uint8_t)octets[i];
+	}
+	return true;
+}
+
+void macAddrToString(const macAddr* addr, char* buffer) {
+	sprintf(buffer, "%02x:%02x:%02x:%02x:%02x:%02x", addr->octets[0], addr->octets[1], addr->octets[2], addr->octets[3], addr->octets[4], addr->octets[5]);
 }

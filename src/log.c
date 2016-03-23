@@ -1,9 +1,10 @@
 #include "log.h"
 
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -36,6 +37,27 @@ void logCleanup(void) {
 
 void logSetThreshold(LogLevel level) {
 	_logThreshold = level;
+}
+
+int newSprintf(char** buf, const char* fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	int res = newVsprintf(buf, fmt, args);
+	va_end(args);
+	return res;
+}
+
+int newVsprintf(char** buf, const char* fmt, va_list args) {
+	const size_t defaultBufferSize = 255;
+	*buf = malloc(defaultBufferSize);
+	int neededChars = vsnprintf(*buf, defaultBufferSize, fmt, args);
+	if (neededChars < 0) {
+		free(*buf);
+	} else if ((size_t)neededChars >= defaultBufferSize) {
+		*buf = realloc(*buf, (size_t)neededChars+1);
+		neededChars = vsnprintf(*buf, defaultBufferSize, fmt, args);
+	}
+	return neededChars;
 }
 
 void _lprintln(LogLevel level, const char* str) {
