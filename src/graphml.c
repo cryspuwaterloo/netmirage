@@ -237,7 +237,7 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 				// We store it explicitly rather than using a hash map for
 				// performance reasons.
 				#define CHECK_SET_ATTR(key, acceptInt, acceptFloat, acceptStr, objType, attr) \
-					if (xmlStrEqual(name, (const xmlChar*)key)) { \
+					if (xmlStrEqual(keyName, (const xmlChar*)key)) { \
 						bool correctType = false; \
 						if (xmlStrEqual(type, (const xmlChar*)"int") || xmlStrEqual(type, (const xmlChar*)"long")) correctType = (acceptInt); \
 						else if (xmlStrEqual(type, (const xmlChar*)"float") || xmlStrEqual(type, (const xmlChar*)"double")) correctType = (acceptFloat); \
