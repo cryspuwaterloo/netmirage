@@ -85,8 +85,10 @@ ip4Addr ip4SubnetEnd(const ip4Subnet* subnet) {
 	return subnet->addr | ip4HostMask(subnet);
 }
 
-uint32_t ip4SubnetSize(const ip4Subnet* subnet) {
-	return 1U << (32 - subnet->prefixLen);
+uint32_t ip4SubnetSize(const ip4Subnet* subnet, bool excludeReserved) {
+	uint32_t count = 1U << (32 - subnet->prefixLen);
+	if (excludeReserved && count > 2) count -= 2;
+	return count;
 }
 
 int ip4SubnetToString(const ip4Subnet* subnet, char* buffer) {
@@ -134,7 +136,7 @@ struct ip4Iter_s {
 
 ip4Iter* ip4NewIter(const ip4Subnet* subnet, const ip4Subnet** avoidSubnets) {
 	ip4Iter* it = malloc(sizeof(ip4Iter));
-	it->currentAddr = ntohl(ip4SubnetStart(subnet))-1;
+	it->currentAddr = (int64_t)(ntohl(ip4SubnetStart(subnet)))-1;
 	it->finalAddr = ntohl(ip4SubnetEnd(subnet));
 	it->ignoreCount = 0;
 	if (avoidSubnets != NULL) {
@@ -202,7 +204,7 @@ struct ip4FragIter_s {
 };
 
 ip4FragIter* ip4FragmentSubnet(const ip4Subnet* subnet, uint32_t fragmentCount) {
-	uint32_t parentSize = ip4SubnetSize(subnet);
+	uint32_t parentSize = ip4SubnetSize(subnet, false);
 	if (parentSize < fragmentCount) return NULL;
 
 	// Our strategy is to split the subnet into "small" and "large" fragments.

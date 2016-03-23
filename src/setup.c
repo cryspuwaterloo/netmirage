@@ -11,6 +11,7 @@
 #include <glib.h>
 
 #include "graphml.h"
+#include "ip.h"
 #include "log.h"
 #include "topology.h"
 #include "work.h"
@@ -86,7 +87,7 @@ int setupInit(const setupParams* params) {
 		ip4AddrToString(edge->ip, ip);
 		macAddrToString(&edge->mac, mac);
 		ip4SubnetToString(&edge->vsubnet, subnet);
-		if (ip4SubnetSize(&edge->vsubnet) < 2) {
+		if (ip4SubnetSize(&edge->vsubnet, true) < 2) {
 			lprintf(LogError, "Edge node with IP %s has subnet %s, which is not large enough to use libipaddr to forward traffic to the emulator\n", ip, subnet);
 			subnetErr = true;
 			break;
@@ -126,6 +127,7 @@ typedef struct {
 	bool ignoreEdges;
 	GHashTable* gmlToId; // Maps GraphML names to node identifiers
 	nodeId nextId;
+	ip4Iter* intfAddrIter;
 } gmlContext;
 
 static void gmlFreeData(gpointer data) { free(data); }
@@ -156,6 +158,15 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 	return workAddHost(id, &node->t);
 }
 
+static void gmlGenerateIp(gmlContext* ctx, bool* addrExhausted, ip4Addr* addr) {
+	if (*addrExhausted) return;
+	if (!ip4IterNext(ctx->intfAddrIter)) {
+		*addrExhausted = true;
+		return;
+	}
+	*addr = ip4IterAddr(ctx->intfAddrIter);
+}
+
 static int gmlAddLink(const GmlLink* link, void* userData) {
 	gmlContext* ctx = userData;
 	if (ctx->ignoreEdges) return 0;
@@ -171,7 +182,16 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 	// than as edges
 	if (sourceId == targetId) return 0;
 
-	return workAddLink(sourceId, targetId, &link->t);
+	bool addrExhausted = false;
+	ip4Addr sourceAddr, targetAddr;
+	gmlGenerateIp(ctx, &addrExhausted, &sourceAddr);
+	gmlGenerateIp(ctx, &addrExhausted, &targetAddr);
+	if (addrExhausted) {
+		lprintln(LogError, "Cannot set up all of the virtual links because the non-routable IPv4 address space has been exhausted. Either decrease the number of links in the topology, or assign fewer addresses to the edge nodes.");
+		return 1;
+	}
+
+	return workAddLink(sourceId, targetId, sourceAddr, targetAddr, &link->t);
 }
 
 int setupGraphML(const setupGraphMLParams* gmlParams) {
@@ -184,6 +204,28 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		.nextId = 0,
 	};
 	ctx.gmlToId = g_hash_table_new_full(&g_str_hash, &g_str_equal, &gmlFreeData, NULL);
+
+	// We assign internal interface addresses from the full IPv4 space, but
+	// avoid the subnets reserved for the edge nodes. The fact that the
+	// addresses we use are publicly routable does not matter, since the
+	// internal node namespaces are not connected to the Internet.
+	const size_t ReservedSubnetCount = 3;
+	ip4Subnet reservedSubnets[ReservedSubnetCount];
+	ip4GetSubnet("0.0.0.0/8", &reservedSubnets[0]);
+	ip4GetSubnet("127.0.0.0/8", &reservedSubnets[1]);
+	ip4GetSubnet("255.255.255.255/32", &reservedSubnets[2]);
+	const ip4Subnet* restrictedSubnets[globalParams->edgeNodeCount+ReservedSubnetCount+1];
+	size_t subnets = 0;
+	for (size_t i = 0; i < ReservedSubnetCount; ++i) {
+		restrictedSubnets[subnets++] = &reservedSubnets[i];
+	}
+	for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
+		restrictedSubnets[subnets++] = &globalParams->edgeNodes[i].vsubnet;
+	}
+	restrictedSubnets[subnets++] = NULL;
+	ip4Subnet everything;
+	ip4GetSubnet("0.0.0.0/0", &everything);
+	ctx.intfAddrIter = ip4NewIter(&everything, restrictedSubnets);
 
 	int err = workAddRoot();
 	if (err != 0) goto cleanup;

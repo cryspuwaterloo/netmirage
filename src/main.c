@@ -381,6 +381,8 @@ int main(int argc, char** argv) {
 	logSetStream(stderr);
 	logSetThreshold(args.verbosity);
 
+	int err = 0;
+
 	// In our first argument pass, find out if a setup file was specified
 	argParser = &findSetupFile;
 	if (argp_parse(&argp, argc, argv, 0, NULL, NULL) != 0) {
@@ -404,7 +406,6 @@ int main(int argc, char** argv) {
 	}
 
 	// Set up logging
-	int err = 0;
 	if (args.logFile != NULL) {
 		if (!logSetFile(args.logFile)) {
 			fprintf(stderr, "Could not open log file '%s' for writing.\n", args.logFile);

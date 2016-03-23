@@ -50,7 +50,8 @@ static const char* NetNsDir             = "/var/run/netns";
 static const char* CurrentNsFile        = "/proc/self/ns/net";
 static const char* InitNsFile           = "/proc/1/ns/net";
 static const char* PschedParamFile      = "/proc/net/psched";
-static const char* ForwardingConfigFile = "/proc/sys/net/ipv4/ip_forward";
+static const char* ForwardingSysctlFile = "/proc/sys/net/ipv4/ip_forward";
+static const char* MartianSysctlFile    = "/proc/sys/net/ipv4/conf/all/rp_filter";
 
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
@@ -417,8 +418,16 @@ int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
 	return ifr.ifr_ifindex;
 }
 
-int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t subnetBits, uint32_t broadcastAddr, uint32_t anycastAddr, bool sync) {
-	lprintf(LogDebug, "Adding address to %p:%d: %08x/%u, broadcast %08x, anycast %08x\n", ctx, devIdx, addr, subnetBits, broadcastAddr, anycastAddr);
+int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t subnetBits, ip4Addr broadcastAddr, ip4Addr anycastAddr, bool sync) {
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char ip[IP4_ADDR_BUFLEN];
+		char broadcastIp[IP4_ADDR_BUFLEN];
+		char anycastIp[IP4_ADDR_BUFLEN];
+		ip4AddrToString(addr, ip);
+		ip4AddrToString(broadcastAddr, broadcastIp);
+		ip4AddrToString(anycastAddr, anycastIp);
+		lprintf(LogDebug, "Adding address to %p:%d: %s/%u, broadcast %s, anycast %s\n", ctx, devIdx, ip, subnetBits, broadcastIp, anycastIp);
+	}
 
 	// Using netlink for this task takes about 70% of the time that ioctl
 	// requires to set the address, subnet, and broadcast address.
@@ -553,7 +562,7 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
-int netGetMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result) {
+int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result) {
 	struct arpreq arpr = { .arp_flags = 0 };
 
 	struct sockaddr_in* pa = (struct sockaddr_in*)&arpr.arp_pa;
@@ -583,17 +592,15 @@ int netGetMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* re
 	return EAGAIN;
 }
 
-int netSetForwarding(bool enabled) {
-	lprintf(LogDebug, "Turning %s IP forwarding (routing) for the active namespace\n", enabled ? "on" : "off");
-
+static int writeSysctlSetting(const char* filePath, const char* value, size_t len) {
 	errno = 0;
-	int fd = open(ForwardingConfigFile, O_WRONLY);
+	int fd = open(filePath, O_WRONLY);
 	if (fd == -1) return errno;
 
 	ssize_t res;
 	do {
 		errno = 0;
-		res = write(fd, enabled ? "1" : "0", 1);
+		res = write(fd, value, len);
 		if (res == -1) goto abort;
 	} while (res < 1);
 
@@ -603,8 +610,24 @@ abort:
 	return errno;
 }
 
-int netAddRoute(netContext* ctx, uint32_t dstAddr, uint8_t subnetBits, uint32_t gatewayAddr, int dstDevIdx, bool sync) {
-	lprintf(LogDebug, "Adding route for namespace %p: %08x/%u ==> interface %d via %sgateway %08X\n", ctx, dstAddr, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayAddr);
+int netSetForwarding(bool enabled) {
+	lprintf(LogDebug, "Turning %s IP forwarding (routing) for the active namespace\n", enabled ? "on" : "off");
+	return writeSysctlSetting(ForwardingSysctlFile, enabled ? "1" : "0", 1);
+}
+
+int netSetMartians(bool allow) {
+	lprintf(LogDebug, "%s Martian packets in the active namespace\n", allow ? "Allowing" : "Disallowing");
+	return writeSysctlSetting(MartianSysctlFile, allow ? "0" : "1", 1);
+}
+
+int netAddRoute(netContext* ctx, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char dstIp[IP4_ADDR_BUFLEN];
+		char gatewayIp[IP4_ADDR_BUFLEN];
+		ip4AddrToString(dstAddr, dstIp);
+		ip4AddrToString(gatewayAddr, gatewayIp);
+		lprintf(LogDebug, "Adding route for namespace %p: %s/%u ==> interface %d via %sgateway %s\n", ctx, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
+	}
 
 	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));

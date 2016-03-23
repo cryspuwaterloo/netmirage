@@ -71,10 +71,9 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 // err (if provided) to the error code.
 int netGetInterfaceIndex(netContext* ctx, const char* name, int* err);
 
-// Adds an IPv4 address to an interface. addr should be an address in network
-// byte order. subnetBits specifies the prefix length of the subnet. Returns 0
-// on success or an error code otherwise.
-int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, uint32_t addr, uint8_t subnetBits, uint32_t broadcastAddr, uint32_t anycastAddr, bool sync);
+// Adds an IPv4 address to an interface. subnetBits specifies the prefix length
+// of the subnet. Returns 0 on success or an error code otherwise.
+int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t subnetBits, ip4Addr broadcastAddr, ip4Addr anycastAddr, bool sync);
 
 // Deletes an IPv4 address from the interface. Interfaces may have multiple
 // addresses; this deletes only one of them. Returns 0 on success or an error
@@ -101,11 +100,15 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 // Retrieves the MAC address corresponding to an IP address from the ARP cache.
 // Returns 0 on success or an error code otherwise. If EAGAIN is returned, then
 // the entry was not found in the cache.
-int netGetMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result);
+int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result);
 
 // Enables or disables packet routing between interfaces in the active
 // namespace. Returns 0 on success or an error code otherwise.
 int netSetForwarding(bool enabled);
+
+// Allows or disallows Martian packets in the active namespace. Returns 0 on
+// success or an error code otherwise.
+int netSetMartians(bool allow);
 
 // Adds a static routing entry to the main routing table. The destination is
 // given by dstAddr with the subnetBits most significant bits specifying the
@@ -115,4 +118,4 @@ int netSetForwarding(bool enabled);
 // all bits in dstAddr not covered by subnetBits should be set to 0. If
 // gatewayAddr is 0, then no gateway is used. Returns 0 on success or an error
 // code otherwise.
-int netAddRoute(netContext* ctx, uint32_t dstAddr, uint8_t subnetBits, uint32_t gatewayAddr, int dstDevIdx, bool sync);
+int netAddRoute(netContext* ctx, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);

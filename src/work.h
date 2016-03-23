@@ -34,7 +34,7 @@ int workAddRoot(void);
 int workAddHost(nodeId id, const TopoNode* node);
 
 // Adds a virtual connection between two hosts.
-int workAddLink(nodeId sourceId, nodeId targetId, const TopoLink* link);
+int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr targetAddr, const TopoLink* link);
 
 // Destroys all hosts created with the network prefix. If deletedHosts is not
 // NULL, the number of deleted hosts is stored. If an error was encountered, the

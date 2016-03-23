@@ -78,7 +78,7 @@ int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result) {
 	char ipStr[IP4_ADDR_BUFLEN];
 	ipStr[0] = '\0';
 	for (int attempt = 0; attempt < 5; ++attempt) {
-		res = netGetMacAddr(defaultNet, intfName, ip, result);
+		res = netGetRemoteMacAddr(defaultNet, intfName, ip, result);
 		if (res == 0) return 0;
 		if (res != EAGAIN) return res;
 
@@ -112,6 +112,14 @@ int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result) {
 	return 1;
 }
 
+static int applyNamespaceParams(void) {
+	int err = netSetForwarding(true);
+	if (err != 0) return err;
+
+	err = netSetMartians(true);
+	return err;
+}
+
 int workAddRoot(void) {
 	lprintf(LogDebug, "Creating a private 'root' namespace\n");
 
@@ -119,7 +127,7 @@ int workAddRoot(void) {
 	rootNet = netOpenNamespace(RootName, true, &err);
 	if (rootNet == NULL) return err;
 
-	err = netSetForwarding(true);
+	err = applyNamespaceParams();
 	if (err != 0) return err;
 
 	return 0;
@@ -135,7 +143,7 @@ int workAddHost(nodeId id, const TopoNode* node) {
 	netContext* net = ncOpenNamespace(nc, id, nodeName, true, &err);
 	if (net == NULL) return err;
 
-	err = netSetForwarding(true);
+	err = applyNamespaceParams();
 	if (err != 0) return err;
 
 	if (node->client) {
@@ -145,21 +153,27 @@ int workAddHost(nodeId id, const TopoNode* node) {
 	return 0;
 }
 
-static int applyInterfaceParams(netContext* net, char* intfName, const TopoLink* link) {
+static int applyInterfaceParams(netContext* net, char* intfName, ip4Addr addr, const TopoLink* link, int* idx) {
 	int err;
-	int idx = netGetInterfaceIndex(net, intfName, &err);
-	if (idx == -1) return err;
+	*idx = netGetInterfaceIndex(net, intfName, &err);
+	if (*idx == -1) return err;
 
 	err = netSetInterfaceGro(net, intfName, false);
 	if (err != 0) return err;
 
-	err = netSetEgressShaping(net, idx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
+	err = netSetEgressShaping(net, *idx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
+	if (err != 0) return err;
+
+	err = netAddInterfaceAddrIPv4(net, *idx, addr, 0, 0, 0, true);
+	if (err != 0) return err;
+
+	err = netSetInterfaceUp(net, intfName, true);
 	if (err != 0) return err;
 
 	return 0;
 }
 
-int workAddLink(nodeId sourceId, nodeId targetId, const TopoLink* link) {
+int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr targetAddr, const TopoLink* link) {
 	char sourceName[MAX_NODE_ID_BUFLEN];
 	char targetName[MAX_NODE_ID_BUFLEN];
 	idToNsName(sourceId, sourceName);
@@ -181,9 +195,15 @@ int workAddLink(nodeId sourceId, nodeId targetId, const TopoLink* link) {
 	err = netCreateVethPair(sourceIntf, targetIntf, sourceNet, targetNet, true);
 	if (err != 0) return err;
 
-	err = applyInterfaceParams(sourceNet, sourceIntf, link);
+	int sourceIntfIdx, targetIntfIdx;
+	err = applyInterfaceParams(sourceNet, sourceIntf, sourceAddr, link, &sourceIntfIdx);
 	if (err != 0) return err;
-	err = applyInterfaceParams(targetNet, targetIntf, link);
+	err = applyInterfaceParams(targetNet, targetIntf, targetAddr, link, &targetIntfIdx);
+	if (err != 0) return err;
+
+	err = netAddRoute(sourceNet, targetAddr, 32, 0, sourceIntfIdx, true);
+	if (err != 0) return err;
+	err = netAddRoute(targetNet, sourceAddr, 32, 0, targetIntfIdx, true);
 	if (err != 0) return err;
 
 	return 0;
