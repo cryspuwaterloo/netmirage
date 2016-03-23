@@ -52,6 +52,7 @@ static const char* InitNsFile           = "/proc/1/ns/net";
 static const char* PschedParamFile      = "/proc/net/psched";
 static const char* ForwardingSysctlFile = "/proc/sys/net/ipv4/ip_forward";
 static const char* MartianSysctlFile    = "/proc/sys/net/ipv4/conf/all/rp_filter";
+static const char* IPv6SysctlFile       = "/proc/sys/net/ipv6/conf/all/disable_ipv6";
 
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
@@ -618,6 +619,11 @@ int netSetForwarding(bool enabled) {
 int netSetMartians(bool allow) {
 	lprintf(LogDebug, "%s Martian packets in the active namespace\n", allow ? "Allowing" : "Disallowing");
 	return writeSysctlSetting(MartianSysctlFile, allow ? "0" : "1", 1);
+}
+
+int netSetIPv6(bool enabled) {
+	lprintf(LogDebug, "Turning %s IPv6 support in the active namespace\n", enabled ? "on" : "off");
+	return writeSysctlSetting(IPv6SysctlFile, enabled ? "0" : "1", 1);
 }
 
 int netAddRoute(netContext* ctx, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {

@@ -122,41 +122,20 @@ int destroyNetwork(void) {
 \******************************************************************************/
 
 typedef struct {
+	nodeId id;
+	ip4Addr addr; // Duplicated for all interfaces
+} gmlNodeState;
+
+typedef struct {
 	bool finishedNodes;
 	bool ignoreNodes;
 	bool ignoreEdges;
-	GHashTable* gmlToId; // Maps GraphML names to node identifiers
+	GHashTable* gmlToState; // Maps GraphML names to gmlNodeState pointers
 	nodeId nextId;
 	ip4Iter* intfAddrIter;
 } gmlContext;
 
 static void gmlFreeData(gpointer data) { free(data); }
-
-// Looks up the node identifier for a given string identifier from the GraphML
-// file. If the identifier does not exist, a new one is created and cached.
-static nodeId gmlNameToId(gmlContext* ctx, const char* name) {
-	gpointer hashVal;
-	gboolean exists = g_hash_table_lookup_extended(ctx->gmlToId, name, NULL, &hashVal);
-	if (exists) {
-		return (nodeId)GPOINTER_TO_INT(hashVal);
-	}
-	g_hash_table_insert(ctx->gmlToId, (gpointer)strdup(name), GINT_TO_POINTER(ctx->nextId));
-	return ctx->nextId++;
-}
-
-static int gmlAddNode(const GmlNode* node, void* userData) {
-	gmlContext* ctx = userData;
-	if (ctx->ignoreNodes) return 0;
-	if (ctx->finishedNodes) {
-		lprintln(LogError, "The GraphML file contains some <node> elements after the <edge> elements. To parse this file, use the --two-pass option.");
-		return 1;
-	}
-
-	nodeId id = gmlNameToId(ctx, node->name);
-	lprintf(LogDebug, "GraphML node '%s' assigned identifier %u\n", node->name, id);
-
-	return workAddHost(id, &node->t);
-}
 
 static void gmlGenerateIp(gmlContext* ctx, bool* addrExhausted, ip4Addr* addr) {
 	if (*addrExhausted) return;
@@ -167,6 +146,49 @@ static void gmlGenerateIp(gmlContext* ctx, bool* addrExhausted, ip4Addr* addr) {
 	*addr = ip4IterAddr(ctx->intfAddrIter);
 }
 
+// Looks up the node state for a given string identifier from the GraphML file.
+// If the state does not exist, a new state is created and cached. Returns NULL
+// if an error occurred.
+static gmlNodeState* gmlNameToState(gmlContext* ctx, const char* name) {
+	gpointer ptr;
+	gboolean exists = g_hash_table_lookup_extended(ctx->gmlToState, name, NULL, &ptr);
+	gmlNodeState* state = ptr;
+	if (!exists) {
+		bool addrExhausted;
+		ip4Addr newAddr;
+		gmlGenerateIp(ctx, &addrExhausted, &newAddr);
+		if (addrExhausted) {
+			lprintln(LogError, "Cannot set up all of the virtual hosts because the non-routable IPv4 address space has been exhausted. Either decrease the number of nodes in the topology, or assign fewer addresses to the edge nodes.");
+			return NULL;
+		}
+
+		state = malloc(sizeof(gmlNodeState));
+		state->id = ctx->nextId++;
+		state->addr = newAddr;
+		g_hash_table_insert(ctx->gmlToState, (gpointer)strdup(name), state);
+	}
+	return state;
+}
+
+static int gmlAddNode(const GmlNode* node, void* userData) {
+	gmlContext* ctx = userData;
+	if (ctx->ignoreNodes) return 0;
+	if (ctx->finishedNodes) {
+		lprintln(LogError, "The GraphML file contains some <node> elements after the <edge> elements. To parse this file, use the --two-pass option.");
+		return 1;
+	}
+
+	gmlNodeState* state = gmlNameToState(ctx, node->name);
+	if (state == NULL) return 1;
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char ip[IP4_ADDR_BUFLEN];
+		ip4AddrToString(state->addr, ip);
+		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, state->id, ip);
+	}
+
+	return workAddHost(state->id, &node->t);
+}
+
 static int gmlAddLink(const GmlLink* link, void* userData) {
 	gmlContext* ctx = userData;
 	if (ctx->ignoreEdges) return 0;
@@ -175,23 +197,15 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 		lprintln(LogDebug, "Host creation complete. Now adding virtual ethernet connections.");
 	}
 
-	nodeId sourceId = gmlNameToId(ctx, link->sourceName);
-	nodeId targetId = gmlNameToId(ctx, link->targetName);
+	gmlNodeState* sourceState = gmlNameToState(ctx, link->sourceName);
+	gmlNodeState* targetState = gmlNameToState(ctx, link->targetName);
+	if (sourceState == NULL || targetState == NULL) return 1;
 
 	// We ignore reflexive links; they are handled in node parameters rather
 	// than as edges
-	if (sourceId == targetId) return 0;
+	if (sourceState == targetState) return 0;
 
-	bool addrExhausted = false;
-	ip4Addr sourceAddr, targetAddr;
-	gmlGenerateIp(ctx, &addrExhausted, &sourceAddr);
-	gmlGenerateIp(ctx, &addrExhausted, &targetAddr);
-	if (addrExhausted) {
-		lprintln(LogError, "Cannot set up all of the virtual links because the non-routable IPv4 address space has been exhausted. Either decrease the number of links in the topology, or assign fewer addresses to the edge nodes.");
-		return 1;
-	}
-
-	return workAddLink(sourceId, targetId, sourceAddr, targetAddr, &link->t);
+	return workAddLink(sourceState->id, targetState->id, sourceState->addr, targetState->addr, &link->t);
 }
 
 int setupGraphML(const setupGraphMLParams* gmlParams) {
@@ -203,7 +217,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		.ignoreEdges = false,
 		.nextId = 0,
 	};
-	ctx.gmlToId = g_hash_table_new_full(&g_str_hash, &g_str_equal, &gmlFreeData, NULL);
+	ctx.gmlToState = g_hash_table_new_full(&g_str_hash, &g_str_equal, &gmlFreeData, &gmlFreeData);
 
 	// We assign internal interface addresses from the full IPv4 space, but
 	// avoid the subnets reserved for the edge nodes. The fact that the
@@ -261,6 +275,6 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	}
 
 cleanup:
-	g_hash_table_destroy(ctx.gmlToId);
+	g_hash_table_destroy(ctx.gmlToState);
 	return err;
 }

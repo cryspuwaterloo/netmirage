@@ -117,6 +117,9 @@ static int applyNamespaceParams(void) {
 	if (err != 0) return err;
 
 	err = netSetMartians(true);
+	if (err != 0) return err;
+
+	err = netSetIPv6(false);
 	return err;
 }
 

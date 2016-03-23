@@ -558,6 +558,21 @@
 							</tool>
 						</toolChain>
 					</folderInfo>
+					<fileInfo id="0.218577588.966673119" name="work.c" rcbsApplicability="disable" resourcePath="src/work.c" toolsToInvoke="org.eclipse.cdt.build.core.settings.holder.1662324103.1428266112">
+						<tool id="org.eclipse.cdt.build.core.settings.holder.1662324103.1428266112" name="GNU C" superClass="org.eclipse.cdt.build.core.settings.holder.1662324103">
+							<option id="org.eclipse.cdt.build.core.settings.holder.incpaths.953383900" superClass="org.eclipse.cdt.build.core.settings.holder.incpaths" valueType="includePath">
+								<listOptionValue builtIn="false" value="/usr/lib/gcc/x86_64-linux-gnu/5/include-fixed"/>
+								<listOptionValue builtIn="false" value="/usr/include"/>
+								<listOptionValue builtIn="false" value="/usr/local/include"/>
+								<listOptionValue builtIn="false" value="/usr/lib/gcc/x86_64-linux-gnu/5/include"/>
+								<listOptionValue builtIn="false" value="/usr/include/x86_64-linux-gnu"/>
+								<listOptionValue builtIn="false" value="/usr/include/libxml2"/>
+								<listOptionValue builtIn="false" value="/usr/include/glib-2.0"/>
+								<listOptionValue builtIn="false" value="/usr/include/libcap"/>
+							</option>
+							<inputType id="org.eclipse.cdt.build.core.settings.holder.inType.1411256960" languageId="org.eclipse.cdt.core.gcc" languageName="GNU C" sourceContentType="org.eclipse.cdt.core.cSource,org.eclipse.cdt.core.cHeader" superClass="org.eclipse.cdt.build.core.settings.holder.inType"/>
+						</tool>
+					</fileInfo>
 				</configuration>
 			</storageModule>
 			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>

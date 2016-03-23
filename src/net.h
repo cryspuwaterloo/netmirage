@@ -110,6 +110,10 @@ int netSetForwarding(bool enabled);
 // success or an error code otherwise.
 int netSetMartians(bool allow);
 
+// Enables or disables IPv6 in the active namespace. Returns 0 on success or an
+// error code otherwise.
+int netSetIPv6(bool enabled);
+
 // Adds a static routing entry to the main routing table. The destination is
 // given by dstAddr with the subnetBits most significant bits specifying the
 // subnet. Packets are routed via the specified gatewayAddr. dstDevIdx
