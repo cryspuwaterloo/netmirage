@@ -16,12 +16,17 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/ethtool.h>
+#include <linux/if_packet.h>
 #include <linux/limits.h>
 #include <linux/netlink.h>
 #include <linux/pkt_sched.h>
 #include <linux/rtnetlink.h>
 #include <linux/sockios.h>
+#include <net/ethernet.h>
 #include <net/if.h>
+#include <net/if_arp.h>
+#include <netinet/in.h>
+#include <netinet/if_ether.h>
 #include <sched.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
@@ -30,6 +35,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "ip.h"
 #include "log.h"
 #include "netlink.h"
 
@@ -151,10 +157,17 @@ netContext* netOpenNamespace(const char* name, bool excl, int* err) {
 int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, bool excl) {
 	int err;
 
-	char netNsPath[PATH_MAX];
-	err = getNamespacePath(netNsPath, name);
-	if (err != 0) return err;
+	const char* netNsPath;
+	char pathBuffer[PATH_MAX];
+	if (name == NULL) {
+		netNsPath = InitNsFile;
+	} else {
+		err = getNamespacePath(pathBuffer, name);
+		if (err != 0) return err;
+		netNsPath = pathBuffer;
+	}
 
+	bool mustSwitch = !excl;
 	int nsFd;
 	while (true) {
 		if (!excl) {
@@ -178,6 +191,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 			lprintf(LogError, "Failed to instantiate a new network namespace: %s\n", strerror(errno));
 			goto abort;
 		}
+		mustSwitch = false;
 
 		// Bind mount the new namespace. This prevents it from closing until it
 		// is explicitly unmounted; there is no need to keep a dedicated process
@@ -196,6 +210,16 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 	errno = nlNewContextInPlace(&ctx->nl);
 	if (errno != 0) goto deleteAbort;
 
+	// We have to switch if the namespace already existed and we just opened it.
+	// Otherwise, ioctl will be bound to the wrong namespace.
+	if (mustSwitch) {
+		err = setns(nsFd, CLONE_NEWNET);
+		if (err != 0) {
+			lprintf(LogError, "Failed to switch to existing network namespace: %s\n", strerror(errno));
+			goto freeDeleteAbort;
+		}
+	}
+
 	// We need a socket descriptor specifically for ioctl in order to bind the
 	// calls to the correct net namespace. ioctl does not accept namespace bind
 	// file descriptors like the one stored in nsFd.
@@ -212,7 +236,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 freeDeleteAbort:
 	nlInvalidateContext(&ctx->nl);
 deleteAbort:
-	netDeleteNamespace(name);
+	if (name != NULL) netDeleteNamespace(name);
 	return errno;
 abort:
 	unlink(netNsPath);
@@ -359,9 +383,9 @@ static void initIfReq(struct ifreq* ifr) {
 #endif
 }
 
-static int sendIoCtl(netContext* ctx, const char* name, unsigned long command, struct ifreq* ifr) {
+static int sendIoCtl(netContext* ctx, const char* name, unsigned long command, void* req) {
 	errno = 0;
-	int res = ioctl(ctx->ioctlFd, command, ifr);
+	int res = ioctl(ctx->ioctlFd, command, req);
 	if (res == -1) {
 		lprintf(LogError, "Error for ioctl command %d on interface %p:'%s': %s\n", command, ctx, name, strerror(errno));
 		return errno;
@@ -369,7 +393,7 @@ static int sendIoCtl(netContext* ctx, const char* name, unsigned long command, s
 	return 0;
 }
 
-static int setSendIoCtl(netContext* ctx, const char* name, unsigned long command, void* data, struct ifreq* ifr) {
+static int sendIoCtlIfReq(netContext* ctx, const char* name, unsigned long command, void* data, struct ifreq* ifr) {
 	struct ifreq ifrLocal;
 	if (ifr == NULL) {
 		ifr = &ifrLocal;
@@ -386,7 +410,7 @@ static int setSendIoCtl(netContext* ctx, const char* name, unsigned long command
 int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
 	struct ifreq ifr;
 	initIfReq(&ifr);
-	int res = setSendIoCtl(ctx, name, SIOCGIFINDEX, NULL, &ifr);
+	int res = sendIoCtlIfReq(ctx, name, SIOCGIFINDEX, NULL, &ifr);
 	if (res != 0) return res;
 
 	lprintf(LogDebug, "Interface %p:'%s' has index %d\n", ctx, name, ifr.ifr_ifindex);
@@ -446,7 +470,7 @@ int netSetInterfaceUp(netContext* ctx, const char* name, bool up) {
 
 	struct ifreq ifr;
 	initIfReq(&ifr);
-	int res = setSendIoCtl(ctx, name, SIOCGIFFLAGS, NULL, &ifr);
+	int res = sendIoCtlIfReq(ctx, name, SIOCGIFFLAGS, NULL, &ifr);
 	if (res != 0) return res;
 
 	if (up) ifr.ifr_flags |= IFF_UP;
@@ -465,7 +489,7 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled) {
 	ev.cmd = ETHTOOL_SGRO;
 	ev.data = enabled ? 1 : 0;
 
-	int res = setSendIoCtl(ctx, name, SIOCETHTOOL, &ev, NULL);
+	int res = sendIoCtlIfReq(ctx, name, SIOCETHTOOL, &ev, NULL);
 	if (res != 0) return res;
 
 	return 0;
@@ -527,6 +551,36 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);
+}
+
+int netGetMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result) {
+	struct arpreq arpr = { .arp_flags = 0 };
+
+	struct sockaddr_in* pa = (struct sockaddr_in*)&arpr.arp_pa;
+	pa->sin_family = AF_INET;
+	pa->sin_port = 0;
+	pa->sin_addr.s_addr = ip;
+
+	arpr.arp_ha.sa_family = AF_UNSPEC;
+
+	strncpy(arpr.arp_dev, intfName, IFNAMSIZ);
+	arpr.arp_dev[IFNAMSIZ-1] = '\0';
+
+	int res = sendIoCtl(ctx, intfName, SIOCGARP, &arpr);
+	if (res == ENODEV) return EAGAIN;
+	if (res != 0) return res;
+
+	if (arpr.arp_ha.sa_family != ARPHRD_ETHER) {
+		lprintf(LogError, "ARP table entry had unexpected family %u\n", arpr.arp_ha.sa_family);
+		return EAFNOSUPPORT;
+	}
+	memcpy(result->octets, arpr.arp_ha.sa_data, MAC_ADDR_BYTES);
+
+	// Incomplete entries are represented as completely empty addresses
+	for (size_t i = 0; i < MAC_ADDR_BYTES; ++i) {
+		if (result->octets[i] != 0) return 0;
+	}
+	return EAGAIN;
 }
 
 int netSetForwarding(bool enabled) {

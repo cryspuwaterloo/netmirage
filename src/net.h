@@ -13,6 +13,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ip.h"
+
 typedef struct netContext_s netContext;
 
 // Initializes the network configuration module. Max length of namespacePrefix
@@ -24,8 +26,9 @@ void netCleanup(void);
 
 // Opens a namespace with the given name. If the namespace does not exist, it is
 // first created. If it already exists and excl is true, an error is raised.
-// Namespaces created this way are visible to iproute2. Automatically switches
-// to the namespace when called. Returns a context for the new namespace on
+// Namespaces created this way are visible to iproute2. If name is NULL, then
+// the context is opened for the default namespace. Automatically switches to
+// the namespace when called. Returns a context for the new namespace on
 // success, or NULL on error. If err is not NULL, it is set to the error code on
 // error. If an error occurs, the active namespace may no longer be valid.
 netContext* netOpenNamespace(const char* name, bool excl, int* err);
@@ -94,6 +97,11 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
 // uses the traffic control default value. Returns 0 on success or an error code
 // otherwise.
 int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync);
+
+// Retrieves the MAC address corresponding to an IP address from the ARP cache.
+// Returns 0 on success or an error code otherwise. If EAGAIN is returned, then
+// the entry was not found in the cache.
+int netGetMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result);
 
 // Enables or disables packet routing between interfaces in the active
 // namespace. Returns 0 on success or an error code otherwise.

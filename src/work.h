@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "ip.h"
 #include "topology.h"
 
 // Initializes the work subsystem. Free resources with workJoin. nsPrefix is
@@ -19,6 +20,10 @@ int workInit(const char* nsPrefix, uint64_t softMemCap);
 
 // Frees all resources associated with the work subsystem.
 int workCleanup(void);
+
+// Determines the MAC address of an edge node connected to a physical interface.
+// The semantics are the same as netGetMacAddr.
+int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result);
 
 // Creates a network namespace called the "root", which provides connectivity to
 // the external world.

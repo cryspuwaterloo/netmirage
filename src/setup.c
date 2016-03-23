@@ -19,6 +19,8 @@ static const setupParams* globalParams;
 
 int setupInit(const setupParams* params) {
 	globalParams = params;
+	int res = workInit(params->nsPrefix, params->softMemCap);
+	if (res != 0) return res;
 
 	// Complete definitions for edge nodes by filling in default / missing data
 	size_t edgeSubnetsNeeded = 0;
@@ -35,9 +37,13 @@ int setupInit(const setupParams* params) {
 			strcpy(edge->intf, params->edgeNodeDefaults.intf);
 		}
 		if (!edge->macSpecified) {
-			// TODO
-			lprintln(LogError, "ARP sending is not implemented yet");
-			return 1;
+			res = workGetEdgeMac(edge->intf, edge->ip, &edge->mac);
+			if (res != 0) {
+				char ip[IP4_ADDR_BUFLEN];
+				ip4AddrToString(edge->ip, ip);
+				lprintf(LogError, "Could not locate the MAC address for edge node with IP %s on interface '%s'. Verify that the host is online, or configure the MAC address manually.\n", ip, edge->intf);
+				return res;
+			}
 		}
 		if (!edge->vsubnetSpecified) {
 			++edgeSubnetsNeeded;
@@ -89,7 +95,7 @@ int setupInit(const setupParams* params) {
 	}
 	if (subnetErr) return 1;
 
-	return workInit(params->nsPrefix, params->softMemCap);
+	return 0;
 }
 
 int setupCleanup(void) {

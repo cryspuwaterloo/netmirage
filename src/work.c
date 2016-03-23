@@ -1,11 +1,16 @@
 #include "work.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <sys/capability.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
+#include "ip.h"
 #include "log.h"
 #include "net.h"
 #include "netcache.h"
@@ -14,7 +19,10 @@
 // TODO: preliminary implementation of this module is single-threaded
 
 static netCache* nc;
-static netContext* rootNet; // Outside of the cache because used frequently
+
+// We keep these outside of the cache because they are used frequently:
+static netContext* defaultNet;
+static netContext* rootNet;
 
 // Converts a node identifier into a namespace name. buffer should be large
 // enough to hold the namespace prefix, the identifier in decimal
@@ -44,11 +52,15 @@ int workInit(const char* nsPrefix, uint64_t softMemCap) {
 	cap_free(caps);
 
 	nc = ncNewCache(softMemCap);
+	int err = netInit(nsPrefix);
+	if (err != 0) return err;
+	defaultNet = netOpenNamespace(NULL, false, &err);
+	if (defaultNet == NULL) return err;
 	rootNet = NULL;
-	return netInit(nsPrefix);
+	return 0;
 restricted:
-	if (caps != NULL) cap_free(caps);
 	lprintln(LogError, "The worker process does not have authorization to perform its function. Please run the process with the CAP_NET_ADMIN and CAP_SYS_ADMIN capabilities (e.g., as root).")
+	if (caps != NULL) cap_free(caps);
 	return 1;
 }
 
@@ -57,6 +69,47 @@ int workCleanup(void) {
 	netCleanup();
 	ncFreeCache(nc);
 	return 0;
+}
+
+int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result) {
+	int res = netSwitchNamespace(defaultNet);
+	if (res != 0) return res;
+
+	char ipStr[IP4_ADDR_BUFLEN];
+	ipStr[0] = '\0';
+	for (int attempt = 0; attempt < 5; ++attempt) {
+		res = netGetMacAddr(defaultNet, intfName, ip, result);
+		if (res == 0) return 0;
+		if (res != EAGAIN) return res;
+
+		// The easiest way to force the kernel to update the ARP table is to
+		// send a packet to the remote host. We'll use an ICMP echo request.
+		if (attempt == 0) {
+			ip4AddrToString(ip, ipStr);
+		} else {
+			// Don't spam
+			sleep(1);
+		}
+		errno = 0;
+		pid_t pingPid = fork();
+		if (pingPid == -1) {
+			lprintf(LogError, "Could not fork to ping: %s\n", strerror(errno));
+			return errno;
+		}
+		if (pingPid == 0) {
+			fclose(stdin);
+			fclose(stdout);
+			fclose(stderr);
+			execlp("ping", "ping", "-c", "1", "-I", intfName, ipStr, NULL);
+			exit(1);
+		}
+		int pingStatus;
+		waitpid(pingPid, &pingStatus, 0);
+		if (!WIFEXITED(pingStatus) || WEXITSTATUS(pingStatus) != 0) {
+			lprintf(LogWarning, "Failed to ping edge node with IP %s on interface '%s'. The edge node may be unreachable. Exit code: %d\n", ipStr, intfName, WEXITSTATUS(pingStatus));
+		}
+	}
+	return 1;
 }
 
 int workAddRoot(void) {
