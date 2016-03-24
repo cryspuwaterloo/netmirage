@@ -124,6 +124,7 @@ int destroyNetwork(void) {
 typedef struct {
 	nodeId id;
 	ip4Addr addr; // Duplicated for all interfaces
+	bool isClient;
 } gmlNodeState;
 
 typedef struct {
@@ -147,13 +148,17 @@ static void gmlGenerateIp(gmlContext* ctx, bool* addrExhausted, ip4Addr* addr) {
 }
 
 // Looks up the node state for a given string identifier from the GraphML file.
-// If the state does not exist, a new state is created and cached. Returns NULL
-// if an error occurred.
-static gmlNodeState* gmlNameToState(gmlContext* ctx, const char* name) {
+// If the state does not exist, and "node" is not NULL, then a new state is
+// created and cached. Otherwise, an error occurs. Returns NULL on error.
+static gmlNodeState* gmlNameToState(gmlContext* ctx, const char* name, const TopoNode* node) {
 	gpointer ptr;
 	gboolean exists = g_hash_table_lookup_extended(ctx->gmlToState, name, NULL, &ptr);
 	gmlNodeState* state = ptr;
 	if (!exists) {
+		if (node == NULL) {
+			lprintf(LogError, "Requested existing state for unknown host '%s'\n", name);
+			return NULL;
+		}
 		bool addrExhausted;
 		ip4Addr newAddr;
 		gmlGenerateIp(ctx, &addrExhausted, &newAddr);
@@ -165,6 +170,7 @@ static gmlNodeState* gmlNameToState(gmlContext* ctx, const char* name) {
 		state = malloc(sizeof(gmlNodeState));
 		state->id = ctx->nextId++;
 		state->addr = newAddr;
+		state->isClient = node->client;
 		g_hash_table_insert(ctx->gmlToState, (gpointer)strdup(name), state);
 	}
 	return state;
@@ -178,7 +184,7 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 		return 1;
 	}
 
-	gmlNodeState* state = gmlNameToState(ctx, node->name);
+	gmlNodeState* state = gmlNameToState(ctx, node->name, &node->t);
 	if (state == NULL) return 1;
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char ip[IP4_ADDR_BUFLEN];
@@ -186,7 +192,7 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, state->id, ip);
 	}
 
-	return workAddHost(state->id, &node->t);
+	return workAddHost(state->id, state->addr, &node->t);
 }
 
 static int gmlAddLink(const GmlLink* link, void* userData) {
@@ -197,15 +203,19 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 		lprintln(LogDebug, "Host creation complete. Now adding virtual ethernet connections.");
 	}
 
-	gmlNodeState* sourceState = gmlNameToState(ctx, link->sourceName);
-	gmlNodeState* targetState = gmlNameToState(ctx, link->targetName);
+	gmlNodeState* sourceState = gmlNameToState(ctx, link->sourceName, NULL);
+	gmlNodeState* targetState = gmlNameToState(ctx, link->targetName, NULL);
 	if (sourceState == NULL || targetState == NULL) return 1;
 
-	// We ignore reflexive links; they are handled in node parameters rather
-	// than as edges
-	if (sourceState == targetState) return 0;
-
-	return workAddLink(sourceState->id, targetState->id, sourceState->addr, targetState->addr, &link->t);
+	int res = 0;
+	if (sourceState == targetState) {
+		if (sourceState->isClient) {
+			res = workSetSelfLink(sourceState->id, &link->t);
+		}
+	} else {
+		res = workAddLink(sourceState->id, targetState->id, sourceState->addr, targetState->addr, &link->t);
+	}
+	return res;
 }
 
 int setupGraphML(const setupGraphMLParams* gmlParams) {
@@ -241,7 +251,17 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	ip4GetSubnet("0.0.0.0/0", &everything);
 	ctx.intfAddrIter = ip4NewIter(&everything, restrictedSubnets);
 
-	int err = workAddRoot();
+	// TODO scan for subnet overlaps
+
+	bool addrExhausted;
+	ip4Addr rootAddr;
+	gmlGenerateIp(&ctx, &addrExhausted, &rootAddr);
+	if (addrExhausted) {
+		lprintln(LogError, "The edge node subnets completely fill the unreserved IPv4 space. Some addresses must be left for internal networking interfaces in the emulator.");
+		goto cleanup;
+	}
+
+	int err = workAddRoot(rootAddr);
 	if (err != 0) goto cleanup;
 
 	if (globalParams->srcFile) {

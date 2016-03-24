@@ -23,6 +23,7 @@ static netCache* nc;
 // We keep these outside of the cache because they are used frequently:
 static netContext* defaultNet;
 static netContext* rootNet;
+static ip4Addr rootAddr;
 
 // Converts a node identifier into a namespace name. buffer should be large
 // enough to hold the namespace prefix, the identifier in decimal
@@ -31,12 +32,12 @@ static void idToNsName(nodeId id, char* buffer) {
 	sprintf(buffer, "%u", id);
 }
 
-#define MAX_INTERFACE_BUFLEN (5+(MAX_NODE_ID_BUFLEN-1)+1+(MAX_NODE_ID_BUFLEN-1)+1)
-static void interfaceName(nodeId sourceId, nodeId targetId, char* buffer) {
-	sprintf(buffer, "veth-%u-%u", sourceId, targetId);
-}
-
 static const char* RootName = "root";
+
+// Must be at most (InterfaceBufLen-MAX_NODE_ID_BUFLEN) characters (4)
+static const char* SelfLinkPrefix = "self";
+static const char* RootLinkPrefix = "root";
+static const char* NodeLinkPrefix = "node";
 
 int workInit(const char* nsPrefix, uint64_t softMemCap) {
 	if (!CAP_IS_SUPPORTED(CAP_NET_ADMIN) || !CAP_IS_SUPPORTED(CAP_SYS_ADMIN)) {
@@ -56,7 +57,6 @@ int workInit(const char* nsPrefix, uint64_t softMemCap) {
 	if (err != 0) return err;
 	defaultNet = netOpenNamespace(NULL, false, &err);
 	if (defaultNet == NULL) return err;
-	rootNet = NULL;
 	return 0;
 restricted:
 	lprintln(LogError, "The worker process does not have authorization to perform its function. Please run the process with the CAP_NET_ADMIN and CAP_SYS_ADMIN capabilities (e.g., as root).")
@@ -123,7 +123,38 @@ static int applyNamespaceParams(void) {
 	return err;
 }
 
-int workAddRoot(void) {
+
+static int applyInterfaceParams(netContext* net, const char* intfName, ip4Addr addr, int* idx) {
+	int err;
+	*idx = netGetInterfaceIndex(net, intfName, &err);
+	if (*idx == -1) return err;
+
+	err = netSetInterfaceGro(net, intfName, false);
+	if (err != 0) return err;
+
+	err = netAddInterfaceAddrIPv4(net, *idx, addr, 0, 0, 0, true);
+	if (err != 0) return err;
+
+	err = netSetInterfaceUp(net, intfName, true);
+	if (err != 0) return err;
+
+	return 0;
+}
+
+static int buildVethPair(netContext* sourceNet, netContext* targetNet,
+		const char* sourceIntf, const char* targetIntf, ip4Addr sourceAddr, ip4Addr targetAddr,
+		int* sourceIntfIdx, int* targetIntfIdx) {
+
+	int err = netCreateVethPair(sourceIntf, targetIntf, sourceNet, targetNet, true);
+	if (err != 0) return err;
+
+	err = applyInterfaceParams(sourceNet, sourceIntf, sourceAddr, sourceIntfIdx);
+	if (err != 0) return err;
+	err = applyInterfaceParams(targetNet, targetIntf, targetAddr, targetIntfIdx);
+	return err;
+}
+
+int workAddRoot(ip4Addr addr) {
 	lprintf(LogDebug, "Creating a private 'root' namespace\n");
 
 	int err;
@@ -133,10 +164,12 @@ int workAddRoot(void) {
 	err = applyNamespaceParams();
 	if (err != 0) return err;
 
+	rootAddr = addr;
+
 	return 0;
 }
 
-int workAddHost(nodeId id, const TopoNode* node) {
+int workAddHost(nodeId id, ip4Addr addr, const TopoNode* node) {
 	char nodeName[MAX_NODE_ID_BUFLEN];
 	idToNsName(id, nodeName);
 
@@ -151,29 +184,48 @@ int workAddHost(nodeId id, const TopoNode* node) {
 
 	if (node->client) {
 		lprintf(LogDebug, "Connecting host %s to root for edge node connectivity\n", nodeName);
+
+		char intfBuf[InterfaceBufLen];
+		sprintf(intfBuf, "%s-%u", SelfLinkPrefix, id);
+
+		int sourceIntfIdx, targetIntfIdx;
+
+		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, addr, rootAddr, &sourceIntfIdx, &targetIntfIdx);
+		if (err != 0) return err;
+		// We don't apply shaping to the self link until we read a reflexive
+		// edge from the input file (handled in workAddLink). However, we add
+		// the link immediately so that traffic can flow between clients in the
+		// same edge node even if no reflexive edge is present in the topology.
+
+		sprintf(intfBuf, "%s-%u", NodeLinkPrefix, id);
+
+		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, addr, rootAddr, &sourceIntfIdx, &targetIntfIdx);
+		if (err != 0) return err;
+
+		err = netSetEgressShaping(net, sourceIntfIdx, 0, 0, node->packetLoss, node->bandwidthDown, 0, true);
+		if (err != 0) return err;
+		err = netSetEgressShaping(rootNet, targetIntfIdx, 0, 0, node->packetLoss, node->bandwidthUp, 0, true);
+		if (err != 0) return err;
 	}
 
 	return 0;
 }
 
-static int applyInterfaceParams(netContext* net, char* intfName, ip4Addr addr, const TopoLink* link, int* idx) {
+int workSetSelfLink(nodeId id, const TopoLink* link) {
+	char nodeName[MAX_NODE_ID_BUFLEN];
+	idToNsName(id, nodeName);
+
+	lprintf(LogDebug, "Applying self traffic shaping to client host %s\n", nodeName);
+
 	int err;
-	*idx = netGetInterfaceIndex(net, intfName, &err);
-	if (*idx == -1) return err;
+	netContext* net = ncOpenNamespace(nc, id, nodeName, false, &err);
+	if (net == NULL) return err;
 
-	err = netSetInterfaceGro(net, intfName, false);
-	if (err != 0) return err;
+	int intfIdx = netGetInterfaceIndex(net, SelfLinkPrefix, &err);
+	if (intfIdx == -1) return err;
 
-	err = netSetEgressShaping(net, *idx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
-	if (err != 0) return err;
-
-	err = netAddInterfaceAddrIPv4(net, *idx, addr, 0, 0, 0, true);
-	if (err != 0) return err;
-
-	err = netSetInterfaceUp(net, intfName, true);
-	if (err != 0) return err;
-
-	return 0;
+	// We apply the whole shaping in one direction in order to respect jitter
+	return netSetEgressShaping(net, intfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
 }
 
 int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr targetAddr, const TopoLink* link) {
@@ -190,18 +242,19 @@ int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr ta
 	netContext* targetNet = ncOpenNamespace(nc, targetId, targetName, false, &err);
 	if (targetNet == NULL) return err;
 
-	char sourceIntf[MAX_INTERFACE_BUFLEN];
-	char targetIntf[MAX_INTERFACE_BUFLEN];
-	interfaceName(sourceId, targetId, sourceIntf);
-	interfaceName(targetId, sourceId, targetIntf);
-
-	err = netCreateVethPair(sourceIntf, targetIntf, sourceNet, targetNet, true);
-	if (err != 0) return err;
+	char sourceIntf[InterfaceBufLen];
+	char targetIntf[InterfaceBufLen];
+	sprintf(sourceIntf, "%s-%u", NodeLinkPrefix, targetId);
+	sprintf(targetIntf, "%s-%u", NodeLinkPrefix, sourceId);
 
 	int sourceIntfIdx, targetIntfIdx;
-	err = applyInterfaceParams(sourceNet, sourceIntf, sourceAddr, link, &sourceIntfIdx);
+
+	err = buildVethPair(sourceNet, targetNet, sourceIntf, targetIntf, sourceAddr, targetAddr, &sourceIntfIdx, &targetIntfIdx);
 	if (err != 0) return err;
-	err = applyInterfaceParams(targetNet, targetIntf, targetAddr, link, &targetIntfIdx);
+
+	err = netSetEgressShaping(sourceNet, sourceIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
+	if (err != 0) return err;
+	err = netSetEgressShaping(targetNet, targetIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
 	if (err != 0) return err;
 
 	err = netAddRoute(sourceNet, targetAddr, 32, 0, sourceIntfIdx, true);

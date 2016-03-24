@@ -27,11 +27,14 @@ int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result);
 
 // Creates a network namespace called the "root", which provides connectivity to
 // the external world.
-int workAddRoot(void);
+int workAddRoot(ip4Addr addr);
 
 // Creates a new virtual host in its own network namespace. If the node is a
 // client, then it is connected to the root.
-int workAddHost(nodeId id, const TopoNode* node);
+int workAddHost(nodeId id, ip4Addr addr, const TopoNode* node);
+
+// Applies traffic shaping parameters to a client node's "self" link.
+int workSetSelfLink(nodeId id, const TopoLink* link);
 
 // Adds a virtual connection between two hosts.
 int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr targetAddr, const TopoLink* link);

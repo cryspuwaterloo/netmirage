@@ -12,10 +12,13 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "ip.h"
 
 typedef struct netContext_s netContext;
+
+extern const size_t InterfaceBufLen;
 
 // Initializes the network configuration module. Max length of namespacePrefix
 // is theoretically PATH_MAX-1. Returns 0 on success or an error code otherwise.

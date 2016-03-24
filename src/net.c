@@ -57,6 +57,8 @@ static const char* IPv6SysctlFile       = "/proc/sys/net/ipv6/conf/all/disable_i
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
 
+const size_t InterfaceBufLen = IFNAMSIZ;
+
 // Ensures that the network namespace folders exist and are mounted.
 static int setupNamespaceEnvironment(void) {
 	errno = 0;
@@ -413,7 +415,10 @@ int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
 	struct ifreq ifr;
 	initIfReq(&ifr);
 	int res = sendIoCtlIfReq(ctx, name, SIOCGIFINDEX, NULL, &ifr);
-	if (res != 0) return res;
+	if (res != 0) {
+		*err = res;
+		return -1;
+	}
 
 	lprintf(LogDebug, "Interface %p:'%s' has index %d\n", ctx, name, ifr.ifr_ifindex);
 	return ifr.ifr_ifindex;
