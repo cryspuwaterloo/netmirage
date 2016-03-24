@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 // IP address stored in network order (big endian)
 typedef uint32_t ip4Addr;
@@ -105,6 +106,16 @@ typedef struct {
 // Converts a string in IEEE 802 notation into a MAC address. Returns true on
 // success or false if the string did not contain a valid address.
 bool macGetAddr(const char* str, macAddr* addr);
+
+// Updates addr to contain the next MAC address in the address space. Returns
+// false if an overflow occurred (in which case, addr will contain all zeroes).
+bool macNextAddr(macAddr* addr);
+
+// Returns the "count" next MAC addresses after "nextAddr" in "buffer".
+// "nextAddr" is updated to contain the address immediately following the new
+// group. Buffer should be large enough to contain "count" addresses. Returns
+// false if an overflow occurred.
+bool macNextAddrs(macAddr* nextAddr, macAddr buffer[], size_t count);
 
 // Size of a buffer required to hold a NUL-terminated MAC address string
 #define MAC_ADDR_BUFLEN (2*MAC_ADDR_BYTES + 5 + 1)

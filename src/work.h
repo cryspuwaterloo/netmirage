@@ -14,6 +14,9 @@
 #include "ip.h"
 #include "topology.h"
 
+extern const size_t NeededMacsClient;
+extern const size_t NeededMacsLink;
+
 // Initializes the work subsystem. Free resources with workJoin. nsPrefix is
 // expected to be valid until workCleanup is called.
 int workInit(const char* nsPrefix, uint64_t softMemCap);
@@ -30,14 +33,16 @@ int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result);
 int workAddRoot(ip4Addr addr);
 
 // Creates a new virtual host in its own network namespace. If the node is a
-// client, then it is connected to the root.
-int workAddHost(nodeId id, ip4Addr addr, const TopoNode* node);
+// client, then it is connected to the root. If the node is a client, then macs
+// should contain NeededMacsClient unique addresses.
+int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node);
 
 // Applies traffic shaping parameters to a client node's "self" link.
 int workSetSelfLink(nodeId id, const TopoLink* link);
 
-// Adds a virtual connection between two hosts.
-int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr targetAddr, const TopoLink* link);
+// Adds a virtual connection between two hosts. macs should contain
+// NeededMacsLink unique addresses.
+int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link);
 
 // Destroys all hosts created with the network prefix. If deletedHosts is not
 // NULL, the number of deleted hosts is stored. If an error was encountered, the

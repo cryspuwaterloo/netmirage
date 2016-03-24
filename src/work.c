@@ -18,12 +18,15 @@
 
 // TODO: preliminary implementation of this module is single-threaded
 
+const size_t NeededMacsClient = 4;
+const size_t NeededMacsLink = 2;
+
 static netCache* nc;
 
 // We keep these outside of the cache because they are used frequently:
 static netContext* defaultNet;
 static netContext* rootNet;
-static ip4Addr rootAddr;
+static ip4Addr rootIp;
 
 // Converts a node identifier into a namespace name. buffer should be large
 // enough to hold the namespace prefix, the identifier in decimal
@@ -142,16 +145,25 @@ static int applyInterfaceParams(netContext* net, const char* intfName, ip4Addr a
 }
 
 static int buildVethPair(netContext* sourceNet, netContext* targetNet,
-		const char* sourceIntf, const char* targetIntf, ip4Addr sourceAddr, ip4Addr targetAddr,
+		const char* sourceIntf, const char* targetIntf,
+		ip4Addr sourceIp, ip4Addr targetIp,
+		const macAddr* sourceMac, const macAddr* targetMac,
 		int* sourceIntfIdx, int* targetIntfIdx) {
 
-	int err = netCreateVethPair(sourceIntf, targetIntf, sourceNet, targetNet, true);
+	int err = netCreateVethPair(sourceIntf, targetIntf, sourceNet, targetNet, sourceMac, targetMac, true);
 	if (err != 0) return err;
 
-	err = applyInterfaceParams(sourceNet, sourceIntf, sourceAddr, sourceIntfIdx);
+	err = applyInterfaceParams(sourceNet, sourceIntf, sourceIp, sourceIntfIdx);
 	if (err != 0) return err;
-	err = applyInterfaceParams(targetNet, targetIntf, targetAddr, targetIntfIdx);
-	return err;
+	err = applyInterfaceParams(targetNet, targetIntf, targetIp, targetIntfIdx);
+	if (err != 0) return err;
+
+	err = netAddStaticArp(sourceNet, sourceIntf, targetIp, targetMac);
+	if (err != 0) return err;
+	err = netAddStaticArp(targetNet, targetIntf, sourceIp, sourceMac);
+	if (err != 0) return err;
+
+	return 0;
 }
 
 int workAddRoot(ip4Addr addr) {
@@ -164,12 +176,12 @@ int workAddRoot(ip4Addr addr) {
 	err = applyNamespaceParams();
 	if (err != 0) return err;
 
-	rootAddr = addr;
+	rootIp = addr;
 
 	return 0;
 }
 
-int workAddHost(nodeId id, ip4Addr addr, const TopoNode* node) {
+int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 	char nodeName[MAX_NODE_ID_BUFLEN];
 	idToNsName(id, nodeName);
 
@@ -190,7 +202,7 @@ int workAddHost(nodeId id, ip4Addr addr, const TopoNode* node) {
 
 		int sourceIntfIdx, targetIntfIdx;
 
-		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, addr, rootAddr, &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIp, &macs[0], &macs[1], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 		// We don't apply shaping to the self link until we read a reflexive
 		// edge from the input file (handled in workAddLink). However, we add
@@ -199,7 +211,7 @@ int workAddHost(nodeId id, ip4Addr addr, const TopoNode* node) {
 
 		sprintf(intfBuf, "%s-%u", NodeLinkPrefix, id);
 
-		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, addr, rootAddr, &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIp, &macs[2], &macs[3], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 
 		err = netSetEgressShaping(net, sourceIntfIdx, 0, 0, node->packetLoss, node->bandwidthDown, 0, true);
@@ -228,7 +240,7 @@ int workSetSelfLink(nodeId id, const TopoLink* link) {
 	return netSetEgressShaping(net, intfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
 }
 
-int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr targetAddr, const TopoLink* link) {
+int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link) {
 	char sourceName[MAX_NODE_ID_BUFLEN];
 	char targetName[MAX_NODE_ID_BUFLEN];
 	idToNsName(sourceId, sourceName);
@@ -249,7 +261,7 @@ int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr ta
 
 	int sourceIntfIdx, targetIntfIdx;
 
-	err = buildVethPair(sourceNet, targetNet, sourceIntf, targetIntf, sourceAddr, targetAddr, &sourceIntfIdx, &targetIntfIdx);
+	err = buildVethPair(sourceNet, targetNet, sourceIntf, targetIntf, sourceIp, targetIp, &macs[0], &macs[1], &sourceIntfIdx, &targetIntfIdx);
 	if (err != 0) return err;
 
 	err = netSetEgressShaping(sourceNet, sourceIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
@@ -257,9 +269,9 @@ int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceAddr, ip4Addr ta
 	err = netSetEgressShaping(targetNet, targetIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
 	if (err != 0) return err;
 
-	err = netAddRoute(sourceNet, targetAddr, 32, 0, sourceIntfIdx, true);
+	err = netAddRoute(sourceNet, targetIp, 32, 0, sourceIntfIdx, true);
 	if (err != 0) return err;
-	err = netAddRoute(targetNet, sourceAddr, 32, 0, targetIntfIdx, true);
+	err = netAddRoute(targetNet, sourceIp, 32, 0, targetIntfIdx, true);
 	if (err != 0) return err;
 
 	return 0;

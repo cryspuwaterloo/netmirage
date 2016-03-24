@@ -339,8 +339,21 @@ int netSwitchNamespace(netContext* ctx) {
 	return 0;
 }
 
-int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, bool sync) {
-	lprintf(LogDebug, "Creating virtual ethernet pair (%p:'%s', %p:'%s')\n", ctx1, name1, ctx2, name2);
+int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, bool sync) {
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		lprintHead(LogDebug);
+		lprintDirectf(LogDebug, "Creating virtual ethernet pair (%p:'%s', %p:'%s')", ctx1, name1, ctx2, name2);
+		char mac[MAC_ADDR_BUFLEN];
+		if (addr1 != NULL) {
+			macAddrToString(addr1, mac);
+			lprintDirectf(LogDebug, ", mac1=%s", mac);
+		}
+		if (addr2 != NULL) {
+			macAddrToString(addr2, mac);
+			lprintDirectf(LogDebug, ", mac2=%s", mac);
+		}
+		lprintDirectf(LogDebug, "\n");
+	}
 
 	// The netlink socket used for this message does not matter, since we
 	// explicitly provide namespace file descriptors as part of the request.
@@ -359,6 +372,12 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 		nlBufferAppend(nl, &ctx1->fd, sizeof(ctx1->fd));
 	nlPopAttr(nl);
 
+	if (addr1 != NULL) {
+		nlPushAttr(nl, IFLA_ADDRESS);
+			nlBufferAppend(nl, addr1->octets, MAC_ADDR_BYTES);
+		nlPopAttr(nl);
+	}
+
 	nlPushAttr(nl, IFLA_LINKINFO);
 		nlPushAttr(nl, IFLA_INFO_KIND);
 			nlBufferAppend(nl, "veth", 4);
@@ -372,6 +391,11 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 				nlPushAttr(nl, IFLA_NET_NS_FD);
 					nlBufferAppend(nl, &ctx2->fd, sizeof(ctx2->fd));
 				nlPopAttr(nl);
+				if (addr2 != NULL) {
+					nlPushAttr(nl, IFLA_ADDRESS);
+						nlBufferAppend(nl, addr2->octets, MAC_ADDR_BYTES);
+					nlPopAttr(nl);
+				}
 			nlPopAttr(nl);
 		nlPopAttr(nl);
 	nlPopAttr(nl);
@@ -568,6 +592,32 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
+int netAddStaticArp(netContext* ctx, const char* intfName, ip4Addr ip, const macAddr* mac) {
+	struct arpreq arpr;
+
+	struct sockaddr_in* pa = (struct sockaddr_in*)&arpr.arp_pa;
+	pa->sin_family = AF_INET;
+	pa->sin_port = 0;
+	pa->sin_addr.s_addr = ip;
+
+	arpr.arp_ha.sa_family = ARPHRD_ETHER;
+	memcpy(arpr.arp_ha.sa_data, mac->octets, MAC_ADDR_BYTES);
+
+	arpr.arp_flags = ATF_COM | ATF_PERM;
+
+	strncpy(arpr.arp_dev, intfName, InterfaceBufLen);
+
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char ipStr[IP4_ADDR_BUFLEN];
+		char macStr[MAC_ADDR_BUFLEN];
+		ip4AddrToString(ip, ipStr);
+		macAddrToString(mac, macStr);
+		lprintf(LogDebug, "Adding static ARP entry for interface %p:'%s': %s => %s\n", ctx, intfName, ipStr, macStr);
+	}
+
+	return sendIoCtl(ctx, intfName, SIOCSARP, &arpr);
+}
+
 int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result) {
 	struct arpreq arpr = { .arp_flags = 0 };
 
@@ -637,7 +687,7 @@ int netAddRoute(netContext* ctx, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr ga
 		char gatewayIp[IP4_ADDR_BUFLEN];
 		ip4AddrToString(dstAddr, dstIp);
 		ip4AddrToString(gatewayAddr, gatewayIp);
-		lprintf(LogDebug, "Adding route for namespace %p: %s/%u ==> interface %d via %sgateway %s\n", ctx, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
+		lprintf(LogDebug, "Adding route for namespace %p: %s/%u => interface %d via %sgateway %s\n", ctx, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
 	}
 
 	nlContext* nl = &ctx->nl;

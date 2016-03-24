@@ -198,11 +198,11 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 	ctx->iov.iov_len = msgBuffer.nlmsg->nlmsg_len;
 
 	while (true) {
-		lprintf(LogDebug, "Sending netlink message %lu\n", msgBuffer.nlmsg->nlmsg_seq);
+		lprintf(LogDebug, "Sending netlink message %p:%lu\n", ctx, msgBuffer.nlmsg->nlmsg_seq);
 		errno = 0;
 		if (sendmsg(ctx->sock, &ctx->msg, 0) == -1) {
 			if (errno == EAGAIN || errno == EINTR) continue;
-			lprintf(LogError, "Error when sending netlink request to the kernel: %s\n", strerror(errno));
+			lprintf(LogError, "Error when sending netlink request to the kernel from %p: %s\n", ctx, strerror(errno));
 			return errno;
 		} else break;
 	}
@@ -229,15 +229,15 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 				continue;
 			}
 			if (res == EAGAIN || errno == EINTR) continue;
-			lprintf(LogError, "Netlink socket read error: %s\n", strerror(errno));
+			lprintf(LogError, "Netlink socket %p read error: %s\n", ctx, strerror(errno));
 			return errno;
 		}
 		if (res == 0) {
-			lprintln(LogError, "Netlink socket was closed by the kernel");
+			lprintf(LogError, "Netlink socket %p was closed by the kernel\n", ctx);
 			return -1;
 		}
 		if (ctx->msg.msg_namelen != sizeof(fromAddr)) {
-			lprintln(LogError, "Netlink response used wrong address protocol");
+			lprintf(LogError, "Netlink response to %p used wrong address protocol\n", ctx);
 			return -1;
 		}
 
@@ -253,7 +253,7 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 				struct nlmsgerr* nlerr = NLMSG_DATA(nlm);
 				if (nlerr->error != 0) {
 					// Errors reported by the kernel are negative
-					lprintf(LogError, "Netlink-reported error: %s\n", strerror(-nlerr->error));
+					lprintf(LogError, "Netlink-reported error for %p: %s\n", ctx, strerror(-nlerr->error));
 					return -nlerr->error;
 				}
 			}
@@ -263,6 +263,6 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 			}
 		}
 	}
-	lprintf(LogDebug, "Kernel acknowledged netlink message %d\n", seq);
+	lprintf(LogDebug, "Kernel acknowledged netlink message %p:%d\n", ctx, seq);
 	return 0;
 }

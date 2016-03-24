@@ -67,8 +67,9 @@ int netEnumNamespaces(netNsCallback callback, void* userData);
 int netSwitchNamespace(netContext* ctx);
 
 // Creates a virtual Ethernet pair of interfaces with endpoints in the given
-// namespaces.
-int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, bool sync);
+// namespaces. If the MAC addresses are not NULL, they are used to configure the
+// new interfaces.
+int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, bool sync);
 
 // Returns the interface index for an interface. On error, returns -1 and sets
 // err (if provided) to the error code.
@@ -99,6 +100,10 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
 // uses the traffic control default value. Returns 0 on success or an error code
 // otherwise.
 int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync);
+
+// Adds a static ARP entry to the routing table. Returns 0 on success or an
+// error code otherwise.
+int netAddStaticArp(netContext* ctx, const char* intfName, ip4Addr ip, const macAddr* mac);
 
 // Retrieves the MAC address corresponding to an IP address from the ARP cache.
 // Returns 0 on success or an error code otherwise. If EAGAIN is returned, then

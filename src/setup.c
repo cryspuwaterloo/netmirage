@@ -134,6 +134,7 @@ typedef struct {
 	GHashTable* gmlToState; // Maps GraphML names to gmlNodeState pointers
 	nodeId nextId;
 	ip4Iter* intfAddrIter;
+	macAddr macAddrIter;
 } gmlContext;
 
 static void gmlFreeData(gpointer data) { free(data); }
@@ -186,13 +187,22 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 
 	gmlNodeState* state = gmlNameToState(ctx, node->name, &node->t);
 	if (state == NULL) return 1;
+
+	macAddr macs[NeededMacsClient];
+	if (node->t.client) {
+		if (!macNextAddrs(&ctx->macAddrIter, macs, NeededMacsClient)) {
+			lprintln(LogError, "Ran out of MAC addresses when creating a new client node.");
+			return 1;
+		}
+	}
+
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char ip[IP4_ADDR_BUFLEN];
 		ip4AddrToString(state->addr, ip);
 		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, state->id, ip);
 	}
 
-	return workAddHost(state->id, state->addr, &node->t);
+	return workAddHost(state->id, state->addr, macs, &node->t);
 }
 
 static int gmlAddLink(const GmlLink* link, void* userData) {
@@ -213,7 +223,12 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			res = workSetSelfLink(sourceState->id, &link->t);
 		}
 	} else {
-		res = workAddLink(sourceState->id, targetState->id, sourceState->addr, targetState->addr, &link->t);
+		macAddr macs[NeededMacsLink];
+		if (!macNextAddrs(&ctx->macAddrIter, macs, NeededMacsLink)) {
+			lprintln(LogError, "Ran out of MAC addresses when adding a new virtual ethernet connection.");
+			return 1;
+		}
+		res = workAddLink(sourceState->id, targetState->id, sourceState->addr, targetState->addr, macs, &link->t);
 	}
 	return res;
 }
@@ -226,7 +241,9 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		.ignoreNodes = false,
 		.ignoreEdges = false,
 		.nextId = 0,
+		.macAddrIter = { .octets = { 0 } },
 	};
+	macNextAddr(&ctx.macAddrIter); // Skip all-zeroes address (unassignable)
 	ctx.gmlToState = g_hash_table_new_full(&g_str_hash, &g_str_equal, &gmlFreeData, &gmlFreeData);
 
 	// We assign internal interface addresses from the full IPv4 space, but

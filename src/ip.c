@@ -266,6 +266,22 @@ bool macGetAddr(const char* str, macAddr* addr) {
 	return true;
 }
 
+bool macNextAddr(macAddr* addr) {
+	for (size_t i = MAC_ADDR_BYTES; i > 0; --i) {
+		if (++addr->octets[i-1] != 0) return true;
+	}
+	return false;
+}
+
+bool macNextAddrs(macAddr* nextAddr, macAddr buffer[], size_t count) {
+	bool unwrapped = true;
+	for (size_t i = 0; i < count; ++i) {
+		memcpy(buffer[i].octets, nextAddr->octets, MAC_ADDR_BYTES);
+		if (!macNextAddr(nextAddr)) unwrapped = false;
+	}
+	return unwrapped;
+}
+
 void macAddrToString(const macAddr* addr, char* buffer) {
 	sprintf(buffer, "%02x:%02x:%02x:%02x:%02x:%02x", addr->octets[0], addr->octets[1], addr->octets[2], addr->octets[3], addr->octets[4], addr->octets[5]);
 }
