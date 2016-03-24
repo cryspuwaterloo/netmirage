@@ -22,6 +22,9 @@
 #include "version.h"
 #include "setup.h"
 
+// TODO: normalize naming conventions for "client", "root", etc.
+// TODO: follow POSIX reserved identifier conventions
+
 // Argp version and help configuration
 static void argpVersion(FILE* stream, struct argp_state* state) {
 	fprintf(stream, "%s\n", getVersionString());

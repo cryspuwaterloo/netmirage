@@ -1,6 +1,9 @@
-def doBuild(name, target, cflags):
+def doBuild(name, target, cflags=None, linkflags=None):
 	env = Environment()
-	env.Append(CFLAGS = cflags)
+	if cflags is not None:
+		env.Append(CFLAGS = cflags)
+	if linkflags is not None:
+		env.Append(LINKFLAGS = linkflags)
 	Export('env')
 	Export('target')
 	SConscript("src/SConstruct", variant_dir="build/"+name, duplicate=0)
@@ -8,4 +11,4 @@ def doBuild(name, target, cflags):
 if int(ARGUMENTS.get('debug', 0)):
 	doBuild('debug', 'sneac-debug', '-g3 -DDEBUG')
 else:
-	doBuild('release', 'sneac', '-O3')
+	doBuild('release', 'sneac', '-O3 -flto -fno-fat-lto-objects', '-O3 -flto')

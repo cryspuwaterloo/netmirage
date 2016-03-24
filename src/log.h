@@ -4,6 +4,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+// TODO: colorize log output when possible
+
 // Terminates the logging system
 void logCleanup(void);
 

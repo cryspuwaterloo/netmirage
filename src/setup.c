@@ -78,6 +78,8 @@ int setupInit(const setupParams* params) {
 		}
 	}
 
+	// TODO scan for subnet overlaps
+
 	// Make sure that we have at least one bit to flip in the IP addresses
 	for (size_t i = 0; i < params->edgeNodeCount; ++i) {
 		edgeNodeParams* edge = &params->edgeNodes[i];
@@ -267,8 +269,6 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	ip4Subnet everything;
 	ip4GetSubnet("0.0.0.0/0", &everything);
 	ctx.intfAddrIter = ip4NewIter(&everything, restrictedSubnets);
-
-	// TODO scan for subnet overlaps
 
 	bool addrExhausted;
 	ip4Addr rootAddr;
