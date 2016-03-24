@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 
 #include "log.h"
+#include "mem.h"
 
 #if IP4_ADDR_BUFLEN < INET_ADDRSTRLEN
 #error "IPv4 address buffer length is incorrect for this platform"
@@ -135,7 +136,7 @@ struct ip4Iter_s {
 };
 
 ip4Iter* ip4NewIter(const ip4Subnet* subnet, const ip4Subnet** avoidSubnets) {
-	ip4Iter* it = malloc(sizeof(ip4Iter));
+	ip4Iter* it = emalloc(sizeof(ip4Iter));
 	it->currentAddr = (int64_t)(ntohl(ip4SubnetStart(subnet)))-1;
 	it->finalAddr = ntohl(ip4SubnetEnd(subnet));
 	it->ignoreCount = 0;
@@ -147,7 +148,7 @@ ip4Iter* ip4NewIter(const ip4Subnet* subnet, const ip4Subnet** avoidSubnets) {
 	if (it->ignoreCount == 0) {
 		it->ignores = NULL;
 	} else {
-		it->ignores = malloc(it->ignoreCount * sizeof(ignoreRange));
+		it->ignores = eamalloc(it->ignoreCount, sizeof(ignoreRange), 0);
 		for (size_t i = 0; i < it->ignoreCount; ++i) {
 			it->ignores[i].start = ntohl(ip4SubnetStart(avoidSubnets[i]));
 			it->ignores[i].end = ntohl(ip4SubnetEnd(avoidSubnets[i]));
@@ -221,7 +222,7 @@ ip4FragIter* ip4FragmentSubnet(const ip4Subnet* subnet, uint32_t fragmentCount) 
 	uint32_t leftoverSize = parentSize - totalSmallSize;
 	uint32_t largeFragments = (uint32_t)llrint((double)leftoverSize / (double)smallSize);
 
-	ip4FragIter* it = malloc(sizeof(ip4FragIter));
+	ip4FragIter* it = emalloc(sizeof(ip4FragIter));
 	it->first = true;
 	it->currentAddr = ntohl(subnet->addr);
 	it->smallIncrement = smallSize;

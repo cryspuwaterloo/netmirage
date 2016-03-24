@@ -13,6 +13,7 @@
 #include "graphml.h"
 #include "ip.h"
 #include "log.h"
+#include "mem.h"
 #include "topology.h"
 #include "work.h"
 
@@ -34,7 +35,7 @@ int setupInit(const setupParams* params) {
 				lprintf(LogError, "No interface was specified for edge node with IP %s. Either specify an interface, or specify --iface if all edge nodes are behind the same one.\n", ip);
 				return 1;
 			}
-			edge->intf = malloc(strlen(params->edgeNodeDefaults.intf)+1);
+			edge->intf = eamalloc(strlen(params->edgeNodeDefaults.intf), 1, 1);
 			strcpy(edge->intf, params->edgeNodeDefaults.intf);
 		}
 		if (!edge->macSpecified) {
@@ -170,7 +171,7 @@ static gmlNodeState* gmlNameToState(gmlContext* ctx, const char* name, const Top
 			return NULL;
 		}
 
-		state = malloc(sizeof(gmlNodeState));
+		state = emalloc(sizeof(gmlNodeState));
 		state->id = ctx->nextId++;
 		state->addr = newAddr;
 		state->isClient = node->client;

@@ -17,13 +17,15 @@
 #include <libxml/parser.h>
 #include <glib.h>
 
-#include "log.h"
 #include "ip.h"
+#include "log.h"
+#include "mem.h"
 #include "version.h"
 #include "setup.h"
 
 // TODO: normalize naming conventions for "client", "root", etc.
 // TODO: follow POSIX reserved identifier conventions
+// TODO: minimize includes
 
 // Argp version and help configuration
 static void argpVersion(FILE* stream, struct argp_state* state) {
@@ -79,7 +81,8 @@ static void addEdgeNodeParams(const edgeNodeParams* params) {
 	++args.params.edgeNodeCount;
 	if (args.params.edgeNodeCount > args.edgeNodeCap) {
 		args.edgeNodeCap = args.params.edgeNodeCount * 2;
-		args.params.edgeNodes = realloc(args.params.edgeNodes, args.edgeNodeCap * sizeof(edgeNodeParams));
+		emul(args.params.edgeNodeCount, 2, &args.edgeNodeCap);
+		args.params.edgeNodes = earealloc(args.params.edgeNodes, args.edgeNodeCap, sizeof(edgeNodeParams), 0);
 	}
 	args.params.edgeNodes[args.params.edgeNodeCount-1] = *params;
 }
@@ -97,7 +100,7 @@ static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macS
 	if (intfStr == NULL) {
 		params.intf = NULL;
 	} else {
-		params.intf = malloc(strlen(intfStr)+1);
+		params.intf = eamalloc(strlen(intfStr), 1, 1); // Extra byte for NUL
 		strcpy(params.intf, intfStr);
 	}
 

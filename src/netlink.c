@@ -12,6 +12,7 @@
 #include <linux/rtnetlink.h>
 
 #include "log.h"
+#include "mem.h"
 
 // Struct definition
 #include "netlink.inl"
@@ -35,7 +36,7 @@ void nlCleanup(void) {
 }
 
 nlContext* nlNewContext(int* err) {
-	nlContext* ctx = malloc(sizeof(nlContext));
+	nlContext* ctx = emalloc(sizeof(nlContext));
 
 	int res = nlNewContextInPlace(ctx);
 	if (res == 0) return 0;
@@ -93,8 +94,9 @@ static struct sockaddr_nl kernelAddr = { AF_NETLINK, 0, 0, 0 };
 static void nlReserveSpace(nlContext* ctx, size_t amount) {
 	size_t capacity = msgBufferLen + amount;
 	if (msgBufferCap < capacity) {
-		size_t newCapacity = capacity * 2;
-		msgBuffer.data = realloc(msgBuffer.data, newCapacity);
+		size_t newCapacity;
+		emul(capacity, 2, &newCapacity);
+		msgBuffer.data = erealloc(msgBuffer.data, newCapacity);
 		#ifdef DEBUG
 			// Initialize memory for tools like valgrind, even though we
 			// carefully control the used portion of the buffer

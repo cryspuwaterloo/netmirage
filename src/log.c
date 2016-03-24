@@ -8,6 +8,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "mem.h"
+
 const char* LogLevelStrings[] = {"DEBUG", "INFO", "WARNING", "ERROR", NULL};
 
 static FILE* logStream;
@@ -49,12 +51,12 @@ int newSprintf(char** buf, const char* fmt, ...) {
 
 int newVsprintf(char** buf, const char* fmt, va_list args) {
 	const size_t defaultBufferSize = 255;
-	*buf = malloc(defaultBufferSize);
+	*buf = emalloc(defaultBufferSize);
 	int neededChars = vsnprintf(*buf, defaultBufferSize, fmt, args);
 	if (neededChars < 0) {
 		free(*buf);
 	} else if ((size_t)neededChars >= defaultBufferSize) {
-		*buf = realloc(*buf, (size_t)neededChars+1);
+		*buf = earealloc(*buf, (size_t)neededChars, 1, 1); // Extra byte for NUL
 		neededChars = vsnprintf(*buf, defaultBufferSize, fmt, args);
 	}
 	return neededChars;

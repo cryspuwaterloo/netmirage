@@ -7,6 +7,7 @@
 #include <libxml/parser.h>
 
 #include "log.h"
+#include "mem.h"
 #include "topology.h"
 
 typedef struct {
@@ -19,7 +20,7 @@ const size_t DefaultXmlBufferLen = 255; // Arbitrary default; very generous
 
 static void initXmlCharBuffer(xmlCharBuffer* buffer) {
 	buffer->len = DefaultXmlBufferLen;
-	buffer->data = malloc(buffer->len);
+	buffer->data = emalloc(buffer->len);
 }
 
 static void freeXmlCharBuffer(xmlCharBuffer* buffer) {
@@ -43,8 +44,8 @@ static void copyXmlStr(xmlCharBuffer* dst, const xmlChar* src) {
 		++i;
 	}
 	if (overflow) {
-		dst->len = i * 2;
-		dst->data = realloc(dst->data, dst->len);
+		emul(i, 2, &dst->len);
+		dst->data = erealloc(dst->data, dst->len);
 		copyXmlStr(dst, src);
 	}
 }
@@ -162,7 +163,7 @@ static void initGraphParserState(GraphParserState* state, NewNodeFunc newNode, N
 	state->defaultUndirected = false;
 	initXmlCharBuffer(&state->dataKey);
 	state->dataValueCap = DefaultXmlBufferLen;
-	state->dataValue = malloc(state->dataValueCap);
+	state->dataValue = emalloc(state->dataValueCap);
 	state->dataValueLen = 0;
 	initXmlCharBuffer(&state->nodeId);
 	initXmlCharBuffer(&state->linkSourceId);
@@ -443,10 +444,11 @@ static void graphCharacters(void* ctx, const xmlChar* ch, int len) {
 
 	if (state->mode == GpData) {
 		// Append the new UTF-8 characters to the data buffer
-		size_t newSize = state->dataValueLen + (size_t)len;
+		size_t newSize;
+		eadd(state->dataValueLen, (size_t)len, &newSize);
 		if (newSize > state->dataValueCap) {
-			state->dataValueCap = newSize * 2;
-			state->dataValue = realloc(state->dataValue, state->dataValueCap+1);
+			emul(newSize, 2, &state->dataValueCap);
+			state->dataValue = erealloc(state->dataValue, state->dataValueCap);
 		}
 		memcpy(&state->dataValue[state->dataValueLen], ch, (size_t)len);
 		state->dataValueLen = newSize;
@@ -474,7 +476,7 @@ int gmlParse(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* userDa
 	// Read the input in chunks
 	const size_t chunkSize = 1024 * 8; // Must fit in an int
 	size_t read;
-	char* buffer = malloc(chunkSize);
+	char* buffer = emalloc(chunkSize);
 	do {
 		read = fread(buffer, 1, chunkSize, input);
 		if (read > 0) {

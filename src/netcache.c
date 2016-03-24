@@ -13,6 +13,7 @@
 
 #include <glib.h>
 
+#include "mem.h"
 #include "net.h"
 #include "netlink.h"
 
@@ -38,7 +39,7 @@ static gpointer ncMakeKey(nodeId id) {
 }
 
 netCache* ncNewCache(uint64_t maxMemoryUse) {
-	netCache* cache = malloc(sizeof(netCache));
+	netCache* cache = emalloc(sizeof(netCache));
 	const uint64_t nodeMemoryFudgeFactor = 140; // Rough estimate of glib overhead
 	cache->maxEntries = (uint64_t)((double)maxMemoryUse / (double)(sizeof(ncNode) + nodeMemoryFudgeFactor));
 	if (cache->maxEntries < MIN_ENTRIES) cache->maxEntries = MIN_ENTRIES;
@@ -79,7 +80,7 @@ netContext* ncOpenNamespace(netCache* cache, nodeId id, const char* name, bool e
 	ncNode* node;
 	bool reusing;
 	if ((uint64_t)g_hash_table_size(cache->map) < cache->maxEntries) {
-		node = malloc(sizeof(ncNode));
+		node = emalloc(sizeof(ncNode));
 		reusing = false;
 	} else {
 		node = cache->oldest;

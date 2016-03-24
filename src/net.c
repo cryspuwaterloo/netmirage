@@ -37,6 +37,7 @@
 
 #include "ip.h"
 #include "log.h"
+#include "mem.h"
 #include "netlink.h"
 
 // The implementations in this module are highly specific to Linux.
@@ -149,7 +150,7 @@ static int getNamespacePath(char* buffer, const char* name) {
 // This implementation is meant to be compatible with the "ip netns add"
 // command.
 netContext* netOpenNamespace(const char* name, bool excl, int* err) {
-	netContext* ctx = malloc(sizeof(netContext));
+	netContext* ctx = emalloc(sizeof(netContext));
 	int res = netOpenNamespaceInPlace(ctx, false, name, excl);
 	if (res == 0) return ctx;
 
