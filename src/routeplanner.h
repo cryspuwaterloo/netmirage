@@ -22,8 +22,9 @@ void rfSetWeight(routePlanner* planner, nodeId from, nodeId to, float weight);
 
 // Discovers the shortest routes between all nodes in the graph. If new edge
 // weights are set after planning the routes, this function must be called again
-// before requesting shortest paths.
-void rfPlanRoutes(routePlanner* planner);
+// before requesting shortest paths. Returns 0 on success or an error code
+// otherwise.
+int rfPlanRoutes(routePlanner* planner);
 
 // Finds the shortest route from a starting node to an ending node. Must be
 // called after rfPlanRoutes. If no path exists, the function returns false.

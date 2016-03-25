@@ -4,55 +4,174 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include <glib.h>
+
+#include "log.h"
 #include "mem.h"
 
-// We use the standard unoptimized Floyd-Warshall algorithm (with edge
-// reconstruction) for APSP. We accept a loss of precision by using floats
-// instead of doubles; this reduces the memory requirements by half (due to
-// padding).
-
-// TODO: This is too slow for large networks. Use the optimized version.
+/* We use the Floyd-Warshall algorithm (with edge reconstruction) for APSP. We
+ * accept a loss of precision by using floats instead of doubles; this reduces
+ * the memory requirements by half (due to padding).
+ *
+ * This implementation is highly optimized, and thus sacrifices some simplicity
+ * and readability. Specifically, the implementation is optimized to improve
+ * cache performance and to enable multithreaded computation. These
+ * optimizations are necessary in order to compute large-scale static routing
+ * tables, since the all-pairs shortest path problem for n nodes is O(n^3), and
+ * we intend to support at least tens of thousands of nodes.
+ *
+ * Observations about realistic input:
+ * - The graphs are highly connected (at least 60%). Repeated application of
+ *   Dijkstra's algorithm is too slow.
+ * - Cache performance is a major concern. After optimizing, we reduced CPU time
+ *   by nearly 40%.
+ *
+ * The core of this implementation follows the approach described by
+ * Venkataraman, Sahni, and Mukhopadhyaya in "A Blocked All-Pairs Shortest-Paths
+ * Algorithm" (Journal of Experimental Algorithmics, 2003). This approach uses
+ * loop tiling in order to improve cache performance. We generally follow the
+ * algorithm presented in Figure 6, with minor deviations.
+ *
+ * As part of the approach, we use the following terminology to describe aspects
+ * of the Floyd-Warshall adjacency matrix:
+ * - "Cell": data for a single edge. It stores the weight and the next node.
+ * - "Block": a square region of cells. Every block has dimensions B x B, where
+ *   B is BlockSize.
+ * - "Chunk": a rectangular region of blocks. Chunks always contain an integral
+ *   number of blocks.
+ *
+ * The blocks are processed as described by Venkataraman et al. Each "phase" of
+ * processing, as described in the original paper, is performed as a chunk
+ * processing operation. Since blocks within a chunk (and more generally, a
+ * whole phase), are independent, we can process them in parallel. We divide
+ * chunks into work units that are submitted to a thread pool for sufficiently
+ * large chunks.
+ *
+ * One final optimization that we employ is using a custom memory storage order.
+ * Rather than storing cells in row-major cell order, we store them in row-major
+ * block order, and row-major cell order within the blocks. For example, if the
+ * block size was 2 and the node count was 6, then the following adjacency
+ * matrix lists the array indices corresponding to the cell storage:
+ *
+ *                Cell storage:                  Block indices:
+ *            1  2  | 5  6  | 9  10           (0,0) | (0,1) | (0,2)
+ *            3  4  | 7  8  | 11 12                 |       |
+ *           -----------------------         -----------------------
+ *            13 14 | 17 18 | 21 22           (1,0) | (1,1) | (1,2)
+ *            15 16 | 19 20 | 23 24                 |       |
+ *           -----------------------         -----------------------
+ *            25 26 | 29 30 | 33 34           (2,0) | (2,1) | (2,2)
+ *            27 28 | 31 32 | 35 36                 |       |
+ * This pattern helps to improve cache performance as the matrix is processed.
+ * We refer to this layout as "block order".
+ *
+ * This implementation is not perfect. There are several known techniques for
+ * improving its performance, should that prove necessary:
+ * 1) Use SIMD instructions for the core Floyd-Warshall comparison step. This
+ *    likely means SSE or AVX intrinsics. This approach would necessitate
+ *    storing the weights and "next" identifiers for multiple cells
+ *    sequentially (e.g., struct { float weights[8]; nodeId nexts[8]; }; ). This
+ *    would complicate cell storage further, but would likely improve
+ *    performance.
+ * 2) Use hierarchical tiling and ZMorton storage order, such as described by
+ *    Park, Penner, and Prasanna in "Optimizing Graph Algorithms for Improved
+ *    Cache Performance".
+ */
 
 typedef struct {
 	float weight;
 	nodeId next;
 } edgeInfo;
 
+typedef struct {
+	edgeInfo* edges;
+	nodeId blockRowSize;
+	nodeId rangeRows;
+	nodeId rangeCols;
+	nodeId ijBlock;
+	nodeId ikBlock;
+	nodeId kjBlock;
+
+	GMutex* todoLock;
+	GCond* finished;
+	nodeId todoCount;
+} rfWorkRange;
+
+typedef struct {
+	rfWorkRange* range;
+	nodeId startIndex;
+} rfWorkUnit;
+
 struct routePlanner_s {
 	edgeInfo* edges;
 	nodeId nodeCount;
+
 	nodeId* pathBuffer;
 	size_t pathBufferCap;
+
+	GThreadPool* pool;
+	rfWorkUnit* units;
+	size_t unitsCap;
+
+	GMutex todoLock;
+	GCond finished;
 };
 
+// These values were empirically selected with guidance from the literature
+static const nodeId BlockSize = 16;
+static const nodeId BlockArea = 16 * 16;
+static const nodeId ThreadedThresholdNodes = 1024;
+static const nodeId ThreadWorkSize = 8;
+
 static edgeInfo* rfEdgePtr(routePlanner* planner, nodeId from, nodeId to) {
-	return &planner->edges[from * planner->nodeCount + to];
+	nodeId fromBlock = from / BlockSize;
+	nodeId toBlock = to / BlockSize;
+	nodeId row = from % BlockSize;
+	nodeId col = to % BlockSize;
+	nodeId blockRowSize = planner->nodeCount * BlockSize;
+	size_t index = (fromBlock * blockRowSize) + (toBlock * BlockArea) + (row * BlockSize) + col;
+	return &planner->edges[index];
 }
 
-#include <stdio.h>
 routePlanner* rfNewPlanner(nodeId nodeCount) {
-	printf("%lu\n", sizeof(edgeInfo));
+	/* We force the number of nodes to be a multiple of the block size. This
+	 * trades memory for performance.
+	 * Disadvantages:
+	 * - We waste memory. In the worst case, we lose:
+	 *   (2*nodeCount - BlockSize + 1) * (BlockSize -1) * 8 bytes
+	 * - O(nodeCount) additional operations required when pathfinding
+	 * - Less cache reuse between the end of a row and the start of the next
+	 * Advantages:
+	 * - O(nodeCount^2) fewer special-case tests (with good branch prediction)
+	 * - We use O(nodeCount^2) space and O(nodeCount^3) time, so the
+	 *   disadvantages are negligible
+	 */
+	nodeCount = (nodeCount + BlockSize - 1) / BlockSize * BlockSize;
+
 	routePlanner* planner = malloc(sizeof(routePlanner));
 	planner->nodeCount = nodeCount;
 
-	size_t cellCount;
+	nodeId cellCount;
 	emul(nodeCount, nodeCount, &cellCount);
 	planner->edges = eamalloc(cellCount, sizeof(edgeInfo), 0);
 
+	edgeInfo* edge = planner->edges;
 	for (nodeId i = 0; i < nodeCount; ++i) {
 		for (nodeId j = 0; j < nodeCount; ++j) {
-			edgeInfo* edge = rfEdgePtr(planner, i, j);
 			edge->weight = INFINITY;
 			edge->next = j;
+			++edge;
 		}
 	}
 
 	flexBufferInit((void**)&planner->pathBuffer, NULL, &planner->pathBufferCap);
+	flexBufferInit((void**)&planner->units, NULL, &planner->unitsCap);
 
 	return planner;
 }
 
 void rfFreePlan(routePlanner* planner) {
+	flexBufferFree((void**)&planner->units, NULL, &planner->unitsCap);
 	flexBufferFree((void**)&planner->pathBuffer, NULL, &planner->pathBufferCap);
 	free(planner->edges);
 	free(planner);
@@ -62,29 +181,16 @@ void rfSetWeight(routePlanner* planner, nodeId from, nodeId to, float weight) {
 	rfEdgePtr(planner, from, to)->weight = weight;
 }
 
-void rfPlanRoutes(routePlanner* planner) {
-	for (nodeId k = 0; k < planner->nodeCount; ++k) {
-		for (nodeId i = 0; i < planner->nodeCount; ++i) {
-			for (nodeId j = 0; j < planner->nodeCount; ++j) {
-				edgeInfo* edge1 = rfEdgePtr(planner, i, k);
-				edgeInfo* edge2 = rfEdgePtr(planner, k, j);
-				edgeInfo* directEdge = rfEdgePtr(planner, i, j);
-				float detourWeight = edge1->weight + edge2->weight;
-				if (detourWeight < directEdge->weight) {
-					directEdge->weight = detourWeight;
-					directEdge->next = edge1->next;
-				}
-			}
-		}
-	}
-}
-
 static void rfAddStep(routePlanner* planner, size_t* steps, nodeId nextStep) {
 	flexBufferGrow((void**)&planner->pathBuffer, *steps, &planner->pathBufferCap, 1, sizeof(nodeId));
 	flexBufferAppend(planner->pathBuffer, steps, &nextStep, 1, sizeof(nodeId));
 }
 
 bool rfGetRoute(routePlanner* planner, nodeId start, nodeId end, nodeId** path, nodeId* steps) {
+	// This is the basic Floyd-Warshall path reconstruction technique. The only
+	// complication is using rfEdgePtr to access the edges, since they are
+	// stored in block layout.
+
 	*path = NULL;
 	*steps = 0;
 
@@ -102,4 +208,221 @@ bool rfGetRoute(routePlanner* planner, nodeId start, nodeId end, nodeId** path, 
 	*steps = (nodeId)longSteps;
 	*path = planner->pathBuffer;
 	return true;
+}
+
+// Completely process a single block of cells in the current thread
+static inline void rfProcessBlock(edgeInfo* edges, nodeId ijBlockStart, nodeId ikBlockStart, nodeId kjBlockStart) {
+	for (nodeId k = 0; k < BlockSize; ++k) {
+		edgeInfo* ijEdge = &edges[ijBlockStart];
+		edgeInfo* ikEdge = &edges[ikBlockStart];
+		for (nodeId i = 0; i < BlockSize; ++i) {
+			edgeInfo* kjEdge = &edges[kjBlockStart];
+			for (nodeId j = 0; j < BlockSize; ++j) {
+				float detourWeight = ikEdge->weight + kjEdge->weight;
+				if (detourWeight < ijEdge->weight) {
+					ijEdge->weight = detourWeight;
+					ijEdge->next = ikEdge->next;
+				}
+
+				++kjEdge;
+				++ijEdge;
+			}
+			ikEdge += BlockSize;
+		}
+		++ikBlockStart; // Variable reuse; no longer points to block start
+		kjBlockStart += BlockSize;
+	}
+}
+
+// A pointer to a function that processes a chunk of blocks. We use a pointer so
+// that we can easily swap between implementations at runtime based on the
+// characteristics of the graph.
+typedef void (*rfProcessChunkFunc)(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock);
+
+// Processes a chunk of blocks in a single thread. This is the most basic
+// implementation: simply enumerate the blocks and process each one locally.
+static void rfProcessChunkLocal(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock) {
+	edgeInfo* edges = planner->edges;
+	for (nodeId row = 0; row < rangeRows; ++row) {
+		nodeId ij = ijBlock;
+		nodeId kj = kjBlock;
+		for (nodeId col = 0; col < rangeCols; ++col) {
+			rfProcessBlock(edges, ij, ikBlock, kj);
+			ij += BlockArea;
+			kj += BlockArea;
+		}
+		ijBlock += blockRowSize;
+		ikBlock += blockRowSize;
+	}
+}
+
+// This function is the same as rfProcessChunkLocal, but allows the procedure to
+// begin in the middle of the procedure. The function will act as if the
+// innermost loop has already been processed startIndex times, and will continue
+// for ThreadWorkSize steps.
+static void rfProcessPartialChunk(edgeInfo* edges, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock, nodeId startIndex) {
+	nodeId row = startIndex / rangeCols;
+	nodeId col = startIndex % rangeCols;
+	nodeId rowSkip = blockRowSize * row;
+	nodeId colSkip = BlockArea * col;
+	ijBlock += rowSkip;
+	ikBlock += rowSkip;
+	nodeId ij = ijBlock + colSkip;
+	nodeId kj = kjBlock + colSkip;
+	for (nodeId i = 0; i < ThreadWorkSize; ++i) {
+		rfProcessBlock(edges, ij, ikBlock, kj);
+		ij += BlockArea;
+		kj += BlockArea;
+
+		if (++col >= rangeCols) {
+			col = 0;
+			ijBlock += blockRowSize;
+			ikBlock += blockRowSize;
+			ij = ijBlock;
+			kj = kjBlock;
+			if (++row >= rangeRows) return;
+		}
+	}
+}
+
+// Callback for the thread pool. Processes the chunk identified by the work
+// unit. If no more work is queued, the finished signal is raised.
+static void rfPoolCallback(gpointer data, gpointer user_data) {
+	rfWorkUnit* unit = data;
+	rfWorkRange* range = unit->range;
+	rfProcessPartialChunk(range->edges, range->blockRowSize, range->rangeRows, range->rangeCols, range->ijBlock, range->ikBlock, range->kjBlock, unit->startIndex);
+	g_mutex_lock(range->todoLock);
+	if (--range->todoCount == 0) {
+		g_cond_signal(range->finished);
+	}
+	g_mutex_unlock(range->todoLock);
+}
+
+// Processes a chunk of blocks using a thread pool
+static void rfProcessChunkThreaded(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock) {
+	nodeId spaceSize = rangeRows * rangeCols;
+	if (spaceSize <= ThreadWorkSize) {
+		// The area is too small to justify thread pool overhead
+		if (spaceSize > 0) {
+			rfProcessChunkLocal(planner, blockRowSize, rangeRows, rangeCols, ijBlock, ikBlock, kjBlock);
+		}
+		return;
+	}
+
+	// Copy starting parameters; available to all threads
+	rfWorkRange range;
+	range.edges = planner->edges;
+	range.todoLock = &planner->todoLock;
+	range.finished = &planner->finished;
+	range.blockRowSize = blockRowSize;
+	range.rangeRows = rangeRows;
+	range.rangeCols = rangeCols;
+	range.ijBlock = ijBlock;
+	range.ikBlock = ikBlock;
+	range.kjBlock = kjBlock;
+
+	nodeId tasks = (spaceSize + ThreadWorkSize - 1) / ThreadWorkSize;
+	range.todoCount = tasks;
+
+	flexBufferGrow((void**)&planner->units, 0, &planner->unitsCap, (size_t)tasks, sizeof(rfWorkUnit));
+
+	g_mutex_lock(range.todoLock);
+
+	nodeId loopIdx = 0;
+	for (nodeId i = 0; i < tasks; ++i, loopIdx += ThreadWorkSize) {
+		rfWorkUnit* unit = &planner->units[i];
+		unit->range = &range;
+		unit->startIndex = loopIdx;
+		g_thread_pool_push(planner->pool, unit, NULL);
+	}
+	g_cond_wait(range.finished, range.todoLock);
+	g_mutex_unlock(range.todoLock);
+}
+
+int rfPlanRoutes(routePlanner* planner) {
+	bool singleThreaded = planner->nodeCount < ThreadedThresholdNodes;
+
+	rfProcessChunkFunc processRange;
+	if (singleThreaded) {
+		processRange = &rfProcessChunkLocal;
+	} else {
+		processRange = &rfProcessChunkThreaded;
+
+		// Initialize the thread pool
+		GError* err = NULL;
+		planner->pool = g_thread_pool_new(&rfPoolCallback, NULL, (gint)g_get_num_processors(), TRUE, &err);
+		if (planner->pool == NULL) {
+			lprintf(LogError, "Failed to create thread pool for planning routes. Only direct routes will be available. Error: %s\n", err->message);
+			int code = err->code;
+			g_error_free(err);
+			return code;
+		}
+
+		g_mutex_init(&planner->todoLock);
+		g_cond_init(&planner->finished);
+	}
+
+	// Number of blocks per side of the cube
+	nodeId blocks = planner->nodeCount / BlockSize;
+
+	// The number of cells in a complete row of blocks
+	nodeId blockRowSize = planner->nodeCount * BlockSize;
+
+	// Number of cells between block (i,i) and block (i+1,i+1)
+	nodeId blockDiagonalSize = blockRowSize + BlockArea;
+
+	nodeId blockRowStart = 0; // Offset to (round, 0)
+	nodeId nextBlockRow = 0;  // Offset to (round+1, 0)
+
+	nodeId blockColStart = 0; // Offset to (0, round)
+	nodeId nextBlockCol = 0;  // Offset to (0, round+1)
+
+	nodeId sdbStart = 0;             // Offset to (round, round), self-dependent
+	nodeId rightBlock = BlockArea;   // Offset to (round, round+1)
+	nodeId downBlock = blockRowSize; // Offset to (round+1, round)
+
+	nodeId remainingRounds = blocks - 1; // blocks - (round+1)
+
+	// The details of this loop, including the variables, their update order,
+	// and the sequence of instructions, has been highly optimized through
+	// extensive testing with GCC. Before making any changes (even seemingly
+	// insignificant ones), be sure to carefully benchmark the performance.
+	for (nodeId round = 0; round < blocks; ++round) {
+		blockRowStart = nextBlockRow;
+		nextBlockRow += blockRowSize;
+
+		blockColStart = nextBlockCol;
+		nextBlockCol += BlockArea;
+
+		// Phase 1: process SDB
+		processRange(planner, blockRowSize, 1, 1, sdbStart, sdbStart, sdbStart);
+
+		// We do not follow the order given in Figure 6 of the source paper. The
+		// order given below maximizes cache performance (verified empirically).
+
+		// Phase 2: above, left, right, below
+		processRange(planner, blockRowSize, round, 1, blockColStart, blockColStart, sdbStart);
+		processRange(planner, blockRowSize, 1, round, blockRowStart, sdbStart, blockRowStart);
+		processRange(planner, blockRowSize, 1, remainingRounds, rightBlock, sdbStart, rightBlock);
+		processRange(planner, blockRowSize, remainingRounds, 1, downBlock, downBlock, sdbStart);
+
+		// Phase 3: above left, above right, below left, below right
+		processRange(planner, blockRowSize, round, round, 0, blockColStart, blockRowStart);
+		processRange(planner, blockRowSize, round, remainingRounds, nextBlockCol, blockColStart, rightBlock);
+		processRange(planner, blockRowSize, remainingRounds, round, nextBlockRow, downBlock, blockRowStart);
+		processRange(planner, blockRowSize, remainingRounds, remainingRounds, nextBlockRow + nextBlockCol, downBlock, rightBlock);
+
+		// Move to next diagonal
+		sdbStart += blockDiagonalSize;
+		rightBlock += blockDiagonalSize;
+		downBlock += blockDiagonalSize;
+		--remainingRounds;
+	}
+
+	if (!singleThreaded) {
+		g_mutex_clear(&planner->todoLock);
+		g_cond_clear(&planner->finished);
+		g_thread_pool_free(planner->pool, FALSE, TRUE);
+	}
+	return 0;
 }

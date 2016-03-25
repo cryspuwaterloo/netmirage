@@ -76,7 +76,7 @@ env.Append(CFLAGS = libCapFlags)
 env.Append(LINKFLAGS = libCapLibs)
 
 # Build SNEAC
-env.Append(CFLAGS = '-Wall -Wextra -Wundef -Wendif-labels -Wshadow -Wpointer-arith -Wbad-function-cast -Wcast-qual -Wcast-align -Wwrite-strings -Wconversion -Waggregate-return -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes -Wmissing-declarations -Wpacked -Wredundant-decls -Wnested-externs')
+env.Append(CFLAGS = '-Wall -Wextra -Wundef -Wendif-labels -Wshadow -Wpointer-arith -Wbad-function-cast -Wcast-qual -Wcast-align -Wwrite-strings -Wconversion -Waggregate-return -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes -Wmissing-declarations -Wpacked -Wredundant-decls -Wnested-externs -Winline -Winvalid-pch -Wlong-long -Wdisabled-optimization')
 env.Append(CFLAGS = '-Wno-unused-parameter -Wno-missing-field-initializers')
 env.Append(CFLAGS = '-Werror -fmax-errors=10 -std=c99')
 env.Append(LINKFLAGS = '-lm')
