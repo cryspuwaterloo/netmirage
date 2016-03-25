@@ -77,20 +77,6 @@ static const float ModelNetDivisor = 1000.f; // Kb/s
 #define DEFAULT_SETUP_FILE "setup.cfg"
 #define DEFAULT_CLIENTS_SUBNET "10.0.0.0/8"
 
-static void addEdgeNodeParams(const edgeNodeParams* params) {
-	++args.params.edgeNodeCount;
-	if (args.params.edgeNodeCount > args.edgeNodeCap) {
-		args.edgeNodeCap = args.params.edgeNodeCount * 2;
-		emul(args.params.edgeNodeCount, 2, &args.edgeNodeCap);
-		args.params.edgeNodes = earealloc(args.params.edgeNodes, args.edgeNodeCap, sizeof(edgeNodeParams), 0);
-	}
-	args.params.edgeNodes[args.params.edgeNodeCount-1] = *params;
-}
-
-static void clearEdgeNodeParams(void) {
-	args.params.edgeNodeCount = 0;
-}
-
 // Adds an edge node based on strings, which may be NULL
 static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macStr, const char* vsubnetStr) {
 	edgeNodeParams params;
@@ -113,7 +99,8 @@ static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macS
 	if (params.vsubnetSpecified) {
 		if (!ip4GetSubnet(vsubnetStr, &params.vsubnet)) return false;
 	}
-	addEdgeNodeParams(&params);
+	flexBufferGrow((void**)&args.params.edgeNodes, args.params.edgeNodeCount, &args.edgeNodeCap, 1, sizeof(edgeNodeParams));
+	flexBufferAppend(args.params.edgeNodes, &args.params.edgeNodeCount, &params, 1, sizeof(edgeNodeParams));
 	return true;
 }
 
@@ -150,7 +137,7 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 		// If we just found an explicit edge node for the first time after
 		// loading configuration from the setup file, erase the old edges
 		if (args.loadedEdgesFromSetup) {
-			clearEdgeNodeParams();
+			args.params.edgeNodeCount = 0;
 			args.loadedEdgesFromSetup = false;
 		}
 
@@ -452,6 +439,7 @@ cleanup:
 		}
 		free(args.params.edgeNodes);
 	}
+	flexBufferFree((void**)&args.params.edgeNodes, &args.params.edgeNodeCount, &args.edgeNodeCap);
 	xmlCleanupParser();
 	logCleanup();
 

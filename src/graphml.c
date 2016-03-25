@@ -11,20 +11,19 @@
 #include "topology.h"
 
 typedef struct {
-	size_t len;
 	xmlChar* data;
+	size_t cap;
 } xmlCharBuffer;
 
 const size_t DefaultXmlBufferLen = 255; // Arbitrary default; very generous
                                         // for GraphML identifiers
 
 static void initXmlCharBuffer(xmlCharBuffer* buffer) {
-	buffer->len = DefaultXmlBufferLen;
-	buffer->data = emalloc(buffer->len);
+	flexBufferInit((void**)&buffer->data, NULL, &buffer->cap);
 }
 
 static void freeXmlCharBuffer(xmlCharBuffer* buffer) {
-	free(buffer->data);
+	flexBufferFree((void**)&buffer->data, NULL, &buffer->cap);
 }
 
 // Copy a libxml string quickly, reallocating the target buffer if needed.
@@ -33,21 +32,10 @@ static void copyXmlStr(xmlCharBuffer* dst, const xmlChar* src) {
 	// xmlChars represent bytes of UTF-8 code points. UTF-8 never contains a NUL
 	// except for the final terminator, so we can treat these like C-strings for
 	// the purpose of copying.
-	size_t i = 0;
-	bool overflow = false;
-	while (true) {
-		if (!overflow) {
-			if (i >= dst->len) overflow = true;
-			else dst->data[i] = src[i];
-		}
-		if (src[i] == 0) break;
-		++i;
-	}
-	if (overflow) {
-		emul(i, 2, &dst->len);
-		dst->data = erealloc(dst->data, dst->len);
-		copyXmlStr(dst, src);
-	}
+	size_t srcLen = strlen((const char*)src);
+	eadd(srcLen, 1, &srcLen);
+	flexBufferGrow((void**)&dst->data, 0, &dst->cap, srcLen, 1);
+	flexBufferAppend(dst->data, NULL, src, srcLen, 1);
 }
 
 typedef enum {
@@ -162,9 +150,8 @@ static void initGraphParserState(GraphParserState* state, NewNodeFunc newNode, N
 	state->mode = GpInitial;
 	state->defaultUndirected = false;
 	initXmlCharBuffer(&state->dataKey);
-	state->dataValueCap = DefaultXmlBufferLen;
-	state->dataValue = emalloc(state->dataValueCap);
-	state->dataValueLen = 0;
+	flexBufferInit((void**)&state->dataValue, &state->dataValueLen, &state->dataValueCap);
+	flexBufferGrow((void**)&state->dataValue, state->dataValueLen, &state->dataValueCap, DefaultXmlBufferLen, 1);
 	initXmlCharBuffer(&state->nodeId);
 	initXmlCharBuffer(&state->linkSourceId);
 	initXmlCharBuffer(&state->linkTargetId);
@@ -178,7 +165,7 @@ static void initGraphParserState(GraphParserState* state, NewNodeFunc newNode, N
 
 static void cleanupGraphParserState(GraphParserState* state) {
 	freeXmlCharBuffer(&state->dataKey);
-	if (state->dataValue) free(state->dataValue);
+	flexBufferFree((void**)&state->dataValue, &state->dataValueLen, &state->dataValueCap);
 	freeXmlCharBuffer(&state->nodeId);
 	freeXmlCharBuffer(&state->linkSourceId);
 	freeXmlCharBuffer(&state->linkTargetId);
@@ -444,14 +431,8 @@ static void graphCharacters(void* ctx, const xmlChar* ch, int len) {
 
 	if (state->mode == GpData) {
 		// Append the new UTF-8 characters to the data buffer
-		size_t newSize;
-		eadd(state->dataValueLen, (size_t)len, &newSize);
-		if (newSize > state->dataValueCap) {
-			emul(newSize, 2, &state->dataValueCap);
-			state->dataValue = erealloc(state->dataValue, state->dataValueCap);
-		}
-		memcpy(&state->dataValue[state->dataValueLen], ch, (size_t)len);
-		state->dataValueLen = newSize;
+		flexBufferGrow((void**)&state->dataValue, state->dataValueLen, &state->dataValueCap, (size_t)len, 1);
+		flexBufferAppend(state->dataValue, &state->dataValueLen, ch, (size_t)len, 1);
 	}
 }
 

@@ -29,4 +29,29 @@ void* eamalloc(size_t mul1, size_t mul2, size_t add);
 void* eacalloc(size_t mul1, size_t mul2, size_t add);
 void* earealloc(void* ptr, size_t mul1, size_t mul2, size_t add);
 
-// TODO: standard "buffer, length, capacity" construction
+// The following functions support a "flexible buffer" design pattern. A
+// flexBuffer consists of a block of memory, the capacity of that block, and the
+// length of the bytes stored in the block. An invariant is len <= cap. Buffers
+// can be grown but may not shrink. When the buffer needs to grow, its size
+// becomes double the requested capacity. flexBuffers are similar to std::vector
+// in C++'s STL. We do not define an explicit struct because some callers store
+// the buffer, length, and capacity as part of different structures. It is
+// possible to pass a NULL length to the various functions to avoid tracking the
+// buffer length. In this mode, all appends to the buffer write to the start (in
+// other words, it is not possible to "accumulate" data).
+
+void flexBufferInit(void** buffer, size_t* len, size_t* cap);
+void flexBufferFree(void** buffer, size_t* len, size_t* cap);
+
+// Ensures that the flexBuffer is large enough to fit (len + additionalSpace)
+// elements of size eltsize. It is grown if necessary, in which case buffer may
+// point to a new memory block after the call. The program will abort if it runs
+// out of memory. Callers should ensure that additionalSpace is computed with
+// the e* functions to ensure that no overflow occurs.
+void flexBufferGrow(void** buffer, size_t len, size_t* cap, size_t additionalSpace, size_t eltsize);
+
+// Appends data to the end of a flexBuffer and increases its length accordingly.
+// The caller should use flexBufferGrow to ensure that the buffer is large
+// enough to hold the new data. The size of the data to append is
+// (dataLen * eltsize) bytes.
+void flexBufferAppend(void* buffer, size_t* len, const void* data, size_t dataLen, size_t eltsize);

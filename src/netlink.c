@@ -17,7 +17,6 @@
 // Struct definition
 #include "netlink.inl"
 
-
 // Raw buffer used to hold the message being constructed or received. We share a
 // buffer for all contexts. Even if we did not do this, the module is already
 // not thread-safe because of namespaces being bound to the process. This way,
@@ -29,10 +28,12 @@ static union {
 static size_t msgBufferCap;
 static size_t msgBufferLen;
 
-void nlInit(void) {}
+void nlInit(void) {
+	flexBufferInit(&msgBuffer.data, &msgBufferLen, &msgBufferCap);
+}
 
 void nlCleanup(void) {
-	if (msgBuffer.data != NULL) free(msgBuffer.data);
+	flexBufferFree(&msgBuffer.data, &msgBufferLen, &msgBufferCap);
 }
 
 nlContext* nlNewContext(int* err) {
@@ -91,19 +92,13 @@ void nlInvalidateContext(nlContext* ctx) {
 
 static struct sockaddr_nl kernelAddr = { AF_NETLINK, 0, 0, 0 };
 
+// We don't often use flexBufferAppend because we often directly manipulate data
+// after the used space of the buffer (but within the capacity). This allows us
+// to use the proper netlink offset macros. The following convenience functions
+// make the flexBuffer functions more usable in this setting.
+
 static void nlReserveSpace(nlContext* ctx, size_t amount) {
-	size_t capacity = msgBufferLen + amount;
-	if (msgBufferCap < capacity) {
-		size_t newCapacity;
-		emul(capacity, 2, &newCapacity);
-		msgBuffer.data = erealloc(msgBuffer.data, newCapacity);
-		#ifdef DEBUG
-			// Initialize memory for tools like valgrind, even though we
-			// carefully control the used portion of the buffer
-			memset((char*)msgBuffer.data + msgBufferCap, 0xCE, newCapacity - msgBufferCap);
-		#endif
-		msgBufferCap = newCapacity;
-	}
+	flexBufferGrow(&msgBuffer.data, msgBufferLen, &msgBufferCap, amount, 1);
 }
 
 static void nlCommitSpace(nlContext* ctx, size_t amount) {
@@ -147,8 +142,7 @@ void nlInitMessage(nlContext* ctx, uint16_t msgType, uint16_t msgFlags) {
 
 void nlBufferAppend(nlContext* ctx, const void* buffer, size_t len) {
 	nlReserveSpace(ctx, len);
-	memcpy(nlBufferTail(ctx), buffer, len);
-	nlCommitSpace(ctx, len);
+	flexBufferAppend(msgBuffer.data, &msgBufferLen, buffer, len, 1);
 }
 
 int nlPushAttr(nlContext* ctx, unsigned short type) {
