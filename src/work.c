@@ -62,7 +62,7 @@ int workInit(const char* nsPrefix, uint64_t softMemCap) {
 	if (defaultNet == NULL) return err;
 	return 0;
 restricted:
-	lprintln(LogError, "The worker process does not have authorization to perform its function. Please run the process with the CAP_NET_ADMIN and CAP_SYS_ADMIN capabilities (e.g., as root).")
+	lprintln(LogError, "The worker process does not have authorization to perform its function. Please run the process with the CAP_NET_ADMIN and CAP_SYS_ADMIN capabilities (e.g., as root).");
 	if (caps != NULL) cap_free(caps);
 	return 1;
 }

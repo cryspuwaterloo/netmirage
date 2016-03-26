@@ -24,11 +24,10 @@ void* erealloc(void* ptr, size_t newsize) {
 	return p;
 }
 
-#define COMPUTE_SIZE_NOOVERFLOW(size, mul1, mul2, add) \
-	do { \
+#define COMPUTE_SIZE_NOOVERFLOW(size, mul1, mul2, add) do{ \
 		emul((mul1), (mul2), &size); \
 		eadd(size, (add), &size); \
-	} while (0)
+	} while(0)
 
 void* eamalloc(size_t mul1, size_t mul2, size_t add) {
 	size_t size;

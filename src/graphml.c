@@ -178,11 +178,11 @@ static void cleanupGraphParserState(GraphParserState* state) {
 
 	// Free attribute identifiers. Written this way to avoid another place with
 	// explicit names.
-	#define FREE_ATTRIBS(objType) \
+	#define FREE_ATTRIBS(objType) do{ \
 		for (size_t i = 0; i < sizeof(state->objType##Attribs); i += sizeof(xmlChar*)) { \
 			xmlChar** p = (xmlChar**)(((char*)&state->objType##Attribs) + i); \
 			if (*p) free(*p); \
-		}
+		} }while(0)
 	FREE_ATTRIBS(node);
 	FREE_ATTRIBS(edge);
 }
@@ -248,7 +248,7 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 					else CHECK_SET_ATTR("bandwidthup", true, true, false, node, bandwidthUp)
 					else CHECK_SET_ATTR("bandwidthdown", true, true, false, node, bandwidthDown)
 				} else if (xmlStrEqual(keyFor, (const xmlChar*)"edge")) {
-					CHECK_SET_ATTR(state->weightKey, false, true, false, edge, weight);
+					CHECK_SET_ATTR(state->weightKey, false, true, false, edge, weight)
 					CHECK_SET_ATTR("latency", true, true, false, edge, latency)
 					else CHECK_SET_ATTR("packetloss", true, true, false, edge, packetLoss)
 					else CHECK_SET_ATTR("jitter", true, true, false, edge, jitter)

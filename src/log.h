@@ -4,8 +4,6 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-// TODO: colorize log output when possible
-
 // Terminates the logging system
 void logCleanup(void);
 
@@ -25,6 +23,10 @@ bool logSetFile(const char* filename);
 // Configures the log to write to a stream
 void logSetStream(FILE* output);
 
+// Turns colors on or off. Note that calls to logSetFile and logSetStream
+// implicitly modify the color mode, so this should be called after them.
+void logSetColorize(bool enabled);
+
 // Configures the log verbosity threshold
 void logSetThreshold(LogLevel level);
 
@@ -41,17 +43,17 @@ void logSetThreshold(LogLevel level);
 // Internal log threshold storage. Callers should use setLogThreshold.
 extern LogLevel _logThreshold;
 
-// Prints a line to the log
-#define lprintln(level, str) if (PASSES_LOG_THRESHOLD(level)) { _lprintln((level), (str)); }
+// Prints a line to the log. Do not include newlines in the string.
+#define lprintln(level, str) do{ if (PASSES_LOG_THRESHOLD(level)) { _lprintln((level), (str)); } }while(0)
 
 // Prints a formatted string to the log
-#define lprintf(level, fmt, ...) if (PASSES_LOG_THRESHOLD(level)) { _lprintf((level), (fmt), ##__VA_ARGS__); }
-#define lvprintf(level, fmt, args) if (PASSES_LOG_THRESHOLD(level)) { _lvprintf((level), (fmt), (args)); }
+#define lprintf(level, fmt, ...) do{ if (PASSES_LOG_THRESHOLD(level)) { _lprintf((level), (fmt), ##__VA_ARGS__); } }while(0)
+#define lvprintf(level, fmt, args) do{ if (PASSES_LOG_THRESHOLD(level)) { _lvprintf((level), (fmt), (args)); } }while(0)
 
 // Logging functions with control over the line header. Avoid when possible.
-#define lprintHead(level) if (PASSES_LOG_THRESHOLD(level)) { _lprintHead(level); }
-#define lprintDirectf(level, fmt, ...) if (PASSES_LOG_THRESHOLD(level)) { _lprintDirectf((fmt), ##__VA_ARGS__); }
-#define lvprintDirectf(level, fmt, args) if (PASSES_LOG_THRESHOLD(level)) { _lvprintDirectf((fmt), (args)); }
+#define lprintHead(level) do{ if (PASSES_LOG_THRESHOLD(level)) { _lprintHead(level); } }while(0)
+#define lprintDirectf(level,  fmt, ...) do{ if (PASSES_LOG_THRESHOLD(level)) { _lprintDirectf((fmt), ##__VA_ARGS__); } }while(0)
+#define lvprintDirectf(level, fmt, args) do{ if (PASSES_LOG_THRESHOLD(level)) { _lvprintDirectf((fmt), (args)); } }while(0)
 
 // Convenience functions that are often useful for logging operations. Similar
 // to the behavior of Linux's (v)asprintf.

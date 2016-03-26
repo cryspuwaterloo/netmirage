@@ -28,6 +28,7 @@
 
 // TODO: normalize naming conventions for "client", "root", etc.
 // TODO: follow POSIX reserved identifier conventions
+// TODO: increase precision of _GNU_SOURCE
 // TODO: minimize includes
 
 // Argp version and help configuration
