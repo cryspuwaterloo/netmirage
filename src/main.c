@@ -14,8 +14,11 @@
 #include <strings.h>
 
 #include <argp.h>
-#include <libxml/parser.h>
 #include <glib.h>
+#include <libxml/parser.h>
+#ifdef DEBUG
+#include <mcheck.h>
+#endif
 
 #include "ip.h"
 #include "log.h"
@@ -315,6 +318,10 @@ cleanup:
 }
 
 int main(int argc, char** argv) {
+	#ifdef DEBUG
+		mtrace();
+	#endif
+
 	// Initialize libxml and ensure that the shared object is correct version
 	LIBXML_TEST_VERSION
 
@@ -437,7 +444,6 @@ cleanup:
 			edgeNodeParams* edge = &args.params.edgeNodes[i];
 			if (edge->intf != NULL) free(edge->intf);
 		}
-		free(args.params.edgeNodes);
 	}
 	flexBufferFree((void**)&args.params.edgeNodes, &args.params.edgeNodeCount, &args.edgeNodeCap);
 	xmlCleanupParser();

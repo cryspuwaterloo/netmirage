@@ -68,6 +68,7 @@ restricted:
 }
 
 int workCleanup(void) {
+	netCloseNamespace(defaultNet, false);
 	if (rootNet) netCloseNamespace(rootNet, false);
 	netCleanup();
 	ncFreeCache(nc);

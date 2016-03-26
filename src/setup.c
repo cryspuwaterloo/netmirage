@@ -33,7 +33,8 @@ int setupInit(const setupParams* params) {
 				char ip[IP4_ADDR_BUFLEN];
 				ip4AddrToString(edge->ip, ip);
 				lprintf(LogError, "No interface was specified for edge node with IP %s. Either specify an interface, or specify --iface if all edge nodes are behind the same one.\n", ip);
-				return 1;
+				res = 1;
+				goto cleanup;
 			}
 			edge->intf = eamalloc(strlen(params->edgeNodeDefaults.intf), 1, 1);
 			strcpy(edge->intf, params->edgeNodeDefaults.intf);
@@ -44,7 +45,7 @@ int setupInit(const setupParams* params) {
 				char ip[IP4_ADDR_BUFLEN];
 				ip4AddrToString(edge->ip, ip);
 				lprintf(LogError, "Could not locate the MAC address for edge node with IP %s on interface '%s'. Verify that the host is online, or configure the MAC address manually.\n", ip, edge->intf);
-				return res;
+				goto cleanup;
 			}
 		}
 		if (!edge->vsubnetSpecified) {
@@ -97,9 +98,15 @@ int setupInit(const setupParams* params) {
 		}
 		lprintf(LogInfo, "Configured edge node: IP %s, interface %s, MAC %s, client subnet %s\n", ip, edge->intf, mac, subnet);
 	}
-	if (subnetErr) return 1;
+	if (subnetErr) {
+		res = 1;
+		goto cleanup;
+	}
 
 	return 0;
+cleanup:
+	workCleanup();
+	return res;
 }
 
 int setupCleanup(void) {
@@ -314,5 +321,6 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 
 cleanup:
 	g_hash_table_destroy(ctx.gmlToState);
+	ip4FreeIter(ctx.intfAddrIter);
 	return err;
 }
