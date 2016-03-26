@@ -14,6 +14,7 @@
 #include "ip.h"
 #include "log.h"
 #include "mem.h"
+#include "routeplanner.h"
 #include "topology.h"
 #include "work.h"
 
@@ -145,6 +146,7 @@ typedef struct {
 	nodeId nextId;
 	ip4Iter* intfAddrIter;
 	macAddr macAddrIter;
+	routePlanner* routes;
 } gmlContext;
 
 static void gmlFreeData(gpointer data) { free(data); }
@@ -220,7 +222,8 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 	if (ctx->ignoreEdges) return 0;
 	if (!ctx->finishedNodes) {
 		ctx->finishedNodes = true;
-		lprintln(LogDebug, "Host creation complete. Now adding virtual ethernet connections.");
+		lprintln(LogInfo, "Host creation complete. Now adding virtual ethernet connections.");
+		ctx->routes = rpNewPlanner(ctx->nextId);
 	}
 
 	gmlNodeState* sourceState = gmlNameToState(ctx, link->sourceName, NULL);
@@ -239,6 +242,14 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			return 1;
 		}
 		res = workAddLink(sourceState->id, targetState->id, sourceState->addr, targetState->addr, macs, &link->t);
+		if (res == 0) {
+			if (link->weight < 0.f) {
+				lprintf(LogError, "The link from '%s' to '%s' in the topology has negative weight %f, which is not supported.\n", link->sourceName, link->targetName, link->weight);
+				res = 1;
+			} else {
+				rpSetWeight(ctx->routes, sourceState->id, targetState->id, link->weight);
+			}
+		}
 	}
 	return res;
 }
@@ -252,6 +263,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		.ignoreEdges = false,
 		.nextId = 0,
 		.macAddrIter = { .octets = { 0 } },
+		.routes = NULL,
 	};
 	macNextAddr(&ctx.macAddrIter); // Skip all-zeroes address (unassignable)
 	ctx.gmlToState = g_hash_table_new_full(&g_str_hash, &g_str_equal, &gmlFreeData, &gmlFreeData);
@@ -296,7 +308,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		if (passes > 1) ctx.ignoreEdges = true;
 
 		for (int pass = passes; pass > 0; --pass) {
-			err = gmlParseFile(globalParams->srcFile, &gmlAddNode, &gmlAddLink, &ctx, gmlParams->clientType);
+			err = gmlParseFile(globalParams->srcFile, &gmlAddNode, &gmlAddLink, &ctx, gmlParams->clientType, gmlParams->weightKey);
 			if (err != 0) goto cleanup;
 
 			// Transitions between passes
@@ -316,10 +328,48 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 			goto cleanup;
 
 		}
-		err = gmlParse(stdin, &gmlAddNode, &gmlAddLink, &ctx, gmlParams->clientType);
+		err = gmlParse(stdin, &gmlAddNode, &gmlAddLink, &ctx, gmlParams->clientType, gmlParams->weightKey);
+	}
+
+	// Host and link construction is finished. Now we set up routing
+
+	if (ctx.routes == NULL) {
+		lprintln(LogError, "Network topology did not contain any links");
+		err = 1;
+		goto cleanup;
+	}
+	rpPlanRoutes(ctx.routes);
+
+	GHashTableIter it1, it2;
+	g_hash_table_iter_init(&it1, ctx.gmlToState);
+
+	gpointer key1, val1, key2, val2;
+	bool seenUnroutable = false;
+	while (g_hash_table_iter_next(&it1, &key1, &val1)) {
+		gmlNodeState* start = val1;
+		if (!start->isClient) continue;
+
+		it2 = it1;
+		while (g_hash_table_iter_next(&it2, &key2, &val2)) {
+			gmlNodeState* end = val2;
+			if (!end->isClient) continue;
+
+			lprintf(LogDebug, "Constructing route from client '%s' to '%s'\n", (char*)key1, (char*)key2);
+			nodeId* path;
+			nodeId steps;
+			if (!rpGetRoute(ctx.routes, start->id, end->id, &path, &steps)) {
+				if (!seenUnroutable) {
+					lprintf(LogWarning, "Topology contains unconnected client nodes (e.g., '%s' to '%s' is unroutable)\n", (char*)key1, (char*)key2);
+					seenUnroutable = true;
+				}
+				continue;
+			}
+
+		}
 	}
 
 cleanup:
+	if (ctx.routes != NULL) rpFreePlan(ctx.routes);
 	g_hash_table_destroy(ctx.gmlToState);
 	ip4FreeIter(ctx.intfAddrIter);
 	return err;

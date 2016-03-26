@@ -95,12 +95,12 @@ typedef struct {
 	GMutex* todoLock;
 	GCond* finished;
 	nodeId todoCount;
-} rfWorkRange;
+} rpWorkRange;
 
 typedef struct {
-	rfWorkRange* range;
+	rpWorkRange* range;
 	nodeId startIndex;
-} rfWorkUnit;
+} rpWorkUnit;
 
 struct routePlanner_s {
 	edgeInfo* edges;
@@ -110,7 +110,7 @@ struct routePlanner_s {
 	size_t pathBufferCap;
 
 	GThreadPool* pool;
-	rfWorkUnit* units;
+	rpWorkUnit* units;
 	size_t unitsCap;
 
 	GMutex todoLock;
@@ -123,7 +123,7 @@ static const nodeId BlockArea = 16 * 16;
 static const nodeId ThreadedThresholdNodes = 1024;
 static const nodeId ThreadWorkSize = 8;
 
-static edgeInfo* rfEdgePtr(routePlanner* planner, nodeId from, nodeId to) {
+static edgeInfo* rpEdgePtr(routePlanner* planner, nodeId from, nodeId to) {
 	nodeId fromBlock = from / BlockSize;
 	nodeId toBlock = to / BlockSize;
 	nodeId row = from % BlockSize;
@@ -133,7 +133,9 @@ static edgeInfo* rfEdgePtr(routePlanner* planner, nodeId from, nodeId to) {
 	return &planner->edges[index];
 }
 
-routePlanner* rfNewPlanner(nodeId nodeCount) {
+routePlanner* rpNewPlanner(nodeId nodeCount) {
+	lprintf(LogDebug, "Created a new route planner for %u nodes\n", nodeCount);
+
 	/* We force the number of nodes to be a multiple of the block size. This
 	 * trades memory for performance.
 	 * Disadvantages:
@@ -146,7 +148,9 @@ routePlanner* rfNewPlanner(nodeId nodeCount) {
 	 * - We use O(nodeCount^2) space and O(nodeCount^3) time, so the
 	 *   disadvantages are negligible
 	 */
-	nodeCount = (nodeCount + BlockSize - 1) / BlockSize * BlockSize;
+	nodeId blocks = (nodeCount + BlockSize - 1) / BlockSize;
+	nodeCount = blocks * BlockSize;
+	lprintf(LogDebug, "Node count was set to %u for block alignment\n", nodeCount);
 
 	routePlanner* planner = malloc(sizeof(routePlanner));
 	planner->nodeCount = nodeCount;
@@ -155,12 +159,21 @@ routePlanner* rfNewPlanner(nodeId nodeCount) {
 	emul(nodeCount, nodeCount, &cellCount);
 	planner->edges = eamalloc(cellCount, sizeof(edgeInfo), 0);
 
+	// Set initial weights and "next" identifiers. We traverse the edges in
+	// array order, which makes it somewhat difficult to efficiently compute the
+	// global column numbers.
 	edgeInfo* edge = planner->edges;
-	for (nodeId i = 0; i < nodeCount; ++i) {
-		for (nodeId j = 0; j < nodeCount; ++j) {
-			edge->weight = INFINITY;
-			edge->next = j;
-			++edge;
+	for (nodeId blockRow = 0; blockRow < blocks; ++blockRow) {
+		nodeId colOffset = 0;
+		for (nodeId blockCol = 0; blockCol < blocks; ++blockCol) {
+			for (nodeId row = 0; row < BlockSize; ++row) {
+				for (nodeId col = 0; col < BlockSize; ++col) {
+					edge->weight = INFINITY;
+					edge->next = colOffset + col;
+					++edge;
+				}
+			}
+			colOffset += BlockSize;
 		}
 	}
 
@@ -170,48 +183,59 @@ routePlanner* rfNewPlanner(nodeId nodeCount) {
 	return planner;
 }
 
-void rfFreePlan(routePlanner* planner) {
+void rpFreePlan(routePlanner* planner) {
+	lprintln(LogDebug, "Releasing route planner resources");
 	flexBufferFree((void**)&planner->units, NULL, &planner->unitsCap);
 	flexBufferFree((void**)&planner->pathBuffer, NULL, &planner->pathBufferCap);
 	free(planner->edges);
 	free(planner);
 }
 
-void rfSetWeight(routePlanner* planner, nodeId from, nodeId to, float weight) {
-	rfEdgePtr(planner, from, to)->weight = weight;
+void rpSetWeight(routePlanner* planner, nodeId from, nodeId to, float weight) {
+	lprintf(LogDebug, "Route weight for %u => %u set to %f\n", from, to, weight);
+	rpEdgePtr(planner, from, to)->weight = weight;
 }
 
-static void rfAddStep(routePlanner* planner, size_t* steps, nodeId nextStep) {
+static void rpAddStep(routePlanner* planner, size_t* steps, nodeId nextStep) {
 	flexBufferGrow((void**)&planner->pathBuffer, *steps, &planner->pathBufferCap, 1, sizeof(nodeId));
 	flexBufferAppend(planner->pathBuffer, steps, &nextStep, 1, sizeof(nodeId));
 }
 
-bool rfGetRoute(routePlanner* planner, nodeId start, nodeId end, nodeId** path, nodeId* steps) {
+bool rpGetRoute(routePlanner* planner, nodeId start, nodeId end, nodeId** path, nodeId* steps) {
 	// This is the basic Floyd-Warshall path reconstruction technique. The only
-	// complication is using rfEdgePtr to access the edges, since they are
+	// complication is using rpEdgePtr to access the edges, since they are
 	// stored in block layout.
 
 	*path = NULL;
 	*steps = 0;
 
-	if (rfEdgePtr(planner, start, end)->weight == INFINITY) return false;
-
-	size_t longSteps = 0;
-	rfAddStep(planner, &longSteps, start);
-
-	while (start != end) {
-		start = rfEdgePtr(planner, start, end)->next;
-		rfAddStep(planner, &longSteps, start);
+	float pathWeight = rpEdgePtr(planner, start, end)->weight;
+	if (pathWeight == INFINITY) {
+		lprintf(LogDebug, "No route exists from %u => %u\n", start, end);
+		return false;
 	}
 
-	if (longSteps > MAX_NODE_ID) return false; // Should not be possible
+	size_t longSteps = 0;
+	rpAddStep(planner, &longSteps, start);
+
+	nodeId next = start;
+	while (next != end) {
+		next = rpEdgePtr(planner, next, end)->next;
+		rpAddStep(planner, &longSteps, next);
+	}
+
+	if (longSteps > MAX_NODE_ID) {
+		lprintf(LogError, "BUG: Route length %lu is longer than node count!\n", longSteps);
+		return false;
+	}
 	*steps = (nodeId)longSteps;
 	*path = planner->pathBuffer;
+	lprintf(LogDebug, "Route from %u => %u has weight %f with %u hops\n", start, end, pathWeight, *steps);
 	return true;
 }
 
 // Completely process a single block of cells in the current thread
-static inline void rfProcessBlock(edgeInfo* edges, nodeId ijBlockStart, nodeId ikBlockStart, nodeId kjBlockStart) {
+static inline void rpProcessBlock(edgeInfo* edges, nodeId ijBlockStart, nodeId ikBlockStart, nodeId kjBlockStart) {
 	for (nodeId k = 0; k < BlockSize; ++k) {
 		edgeInfo* ijEdge = &edges[ijBlockStart];
 		edgeInfo* ikEdge = &edges[ikBlockStart];
@@ -237,17 +261,17 @@ static inline void rfProcessBlock(edgeInfo* edges, nodeId ijBlockStart, nodeId i
 // A pointer to a function that processes a chunk of blocks. We use a pointer so
 // that we can easily swap between implementations at runtime based on the
 // characteristics of the graph.
-typedef void (*rfProcessChunkFunc)(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock);
+typedef void (*rpProcessChunkFunc)(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock);
 
 // Processes a chunk of blocks in a single thread. This is the most basic
 // implementation: simply enumerate the blocks and process each one locally.
-static void rfProcessChunkLocal(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock) {
+static void rpProcessChunkLocal(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock) {
 	edgeInfo* edges = planner->edges;
 	for (nodeId row = 0; row < rangeRows; ++row) {
 		nodeId ij = ijBlock;
 		nodeId kj = kjBlock;
 		for (nodeId col = 0; col < rangeCols; ++col) {
-			rfProcessBlock(edges, ij, ikBlock, kj);
+			rpProcessBlock(edges, ij, ikBlock, kj);
 			ij += BlockArea;
 			kj += BlockArea;
 		}
@@ -256,11 +280,11 @@ static void rfProcessChunkLocal(routePlanner* planner, nodeId blockRowSize, node
 	}
 }
 
-// This function is the same as rfProcessChunkLocal, but allows the procedure to
+// This function is the same as rpProcessChunkLocal, but allows the procedure to
 // begin in the middle of the procedure. The function will act as if the
 // innermost loop has already been processed startIndex times, and will continue
 // for ThreadWorkSize steps.
-static void rfProcessPartialChunk(edgeInfo* edges, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock, nodeId startIndex) {
+static void rpProcessPartialChunk(edgeInfo* edges, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock, nodeId startIndex) {
 	nodeId row = startIndex / rangeCols;
 	nodeId col = startIndex % rangeCols;
 	nodeId rowSkip = blockRowSize * row;
@@ -270,7 +294,7 @@ static void rfProcessPartialChunk(edgeInfo* edges, nodeId blockRowSize, nodeId r
 	nodeId ij = ijBlock + colSkip;
 	nodeId kj = kjBlock + colSkip;
 	for (nodeId i = 0; i < ThreadWorkSize; ++i) {
-		rfProcessBlock(edges, ij, ikBlock, kj);
+		rpProcessBlock(edges, ij, ikBlock, kj);
 		ij += BlockArea;
 		kj += BlockArea;
 
@@ -287,10 +311,10 @@ static void rfProcessPartialChunk(edgeInfo* edges, nodeId blockRowSize, nodeId r
 
 // Callback for the thread pool. Processes the chunk identified by the work
 // unit. If no more work is queued, the finished signal is raised.
-static void rfPoolCallback(gpointer data, gpointer user_data) {
-	rfWorkUnit* unit = data;
-	rfWorkRange* range = unit->range;
-	rfProcessPartialChunk(range->edges, range->blockRowSize, range->rangeRows, range->rangeCols, range->ijBlock, range->ikBlock, range->kjBlock, unit->startIndex);
+static void rpPoolCallback(gpointer data, gpointer user_data) {
+	rpWorkUnit* unit = data;
+	rpWorkRange* range = unit->range;
+	rpProcessPartialChunk(range->edges, range->blockRowSize, range->rangeRows, range->rangeCols, range->ijBlock, range->ikBlock, range->kjBlock, unit->startIndex);
 	g_mutex_lock(range->todoLock);
 	if (--range->todoCount == 0) {
 		g_cond_signal(range->finished);
@@ -299,18 +323,18 @@ static void rfPoolCallback(gpointer data, gpointer user_data) {
 }
 
 // Processes a chunk of blocks using a thread pool
-static void rfProcessChunkThreaded(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock) {
+static void rpProcessChunkThreaded(routePlanner* planner, nodeId blockRowSize, nodeId rangeRows, nodeId rangeCols, nodeId ijBlock, nodeId ikBlock, nodeId kjBlock) {
 	nodeId spaceSize = rangeRows * rangeCols;
 	if (spaceSize <= ThreadWorkSize) {
 		// The area is too small to justify thread pool overhead
 		if (spaceSize > 0) {
-			rfProcessChunkLocal(planner, blockRowSize, rangeRows, rangeCols, ijBlock, ikBlock, kjBlock);
+			rpProcessChunkLocal(planner, blockRowSize, rangeRows, rangeCols, ijBlock, ikBlock, kjBlock);
 		}
 		return;
 	}
 
 	// Copy starting parameters; available to all threads
-	rfWorkRange range;
+	rpWorkRange range;
 	range.edges = planner->edges;
 	range.todoLock = &planner->todoLock;
 	range.finished = &planner->finished;
@@ -324,13 +348,13 @@ static void rfProcessChunkThreaded(routePlanner* planner, nodeId blockRowSize, n
 	nodeId tasks = (spaceSize + ThreadWorkSize - 1) / ThreadWorkSize;
 	range.todoCount = tasks;
 
-	flexBufferGrow((void**)&planner->units, 0, &planner->unitsCap, (size_t)tasks, sizeof(rfWorkUnit));
+	flexBufferGrow((void**)&planner->units, 0, &planner->unitsCap, (size_t)tasks, sizeof(rpWorkUnit));
 
 	g_mutex_lock(range.todoLock);
 
 	nodeId loopIdx = 0;
 	for (nodeId i = 0; i < tasks; ++i, loopIdx += ThreadWorkSize) {
-		rfWorkUnit* unit = &planner->units[i];
+		rpWorkUnit* unit = &planner->units[i];
 		unit->range = &range;
 		unit->startIndex = loopIdx;
 		g_thread_pool_push(planner->pool, unit, NULL);
@@ -339,18 +363,22 @@ static void rfProcessChunkThreaded(routePlanner* planner, nodeId blockRowSize, n
 	g_mutex_unlock(range.todoLock);
 }
 
-int rfPlanRoutes(routePlanner* planner) {
+int rpPlanRoutes(routePlanner* planner) {
 	bool singleThreaded = planner->nodeCount < ThreadedThresholdNodes;
 
-	rfProcessChunkFunc processRange;
+	lprintf(LogInfo, "Constructing routing table for %u nodes (%s)\n", planner->nodeCount, singleThreaded ? "single-threaded" : "multi-threaded");
+
+	rpProcessChunkFunc processRange;
 	if (singleThreaded) {
-		processRange = &rfProcessChunkLocal;
+		processRange = &rpProcessChunkLocal;
 	} else {
-		processRange = &rfProcessChunkThreaded;
+		processRange = &rpProcessChunkThreaded;
 
 		// Initialize the thread pool
+		gint threads = (gint)g_get_num_processors();
+		lprintf(LogDebug, "Using %d threads for Floyd-Warshall\n", threads);
 		GError* err = NULL;
-		planner->pool = g_thread_pool_new(&rfPoolCallback, NULL, (gint)g_get_num_processors(), TRUE, &err);
+		planner->pool = g_thread_pool_new(&rpPoolCallback, NULL, threads, TRUE, &err);
 		if (planner->pool == NULL) {
 			lprintf(LogError, "Failed to create thread pool for planning routes. Only direct routes will be available. Error: %s\n", err->message);
 			int code = err->code;

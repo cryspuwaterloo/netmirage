@@ -19,6 +19,7 @@ typedef struct {
 	const char* sourceName;
 	const char* targetName;
 
+	float weight;
 	TopoLink t;
 } GmlLink;
 
@@ -31,10 +32,10 @@ typedef int (*NewNodeFunc)(const GmlNode* node, void* userData);
 typedef int (*NewLinkFunc)(const GmlLink* link, void* userData);
 
 // Parses a GraphML file from a stream. Returns 0 for success.
-int gmlParse(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType);
+int gmlParse(FILE* input, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType, const char* weightKey);
 
 // Parses a GraphML file stored on the disk. Returns 0 for success.
-int gmlParseFile(const char* filename, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType);
+int gmlParseFile(const char* filename, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType, const char* weightKey);
 
 // Parses a GraphML file stored in memory. Returns 0 for success.
-int gmlParseMemory(char* buffer, int size, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType);
+int gmlParseMemory(char* buffer, int size, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType, const char* weightKey);
