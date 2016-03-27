@@ -47,13 +47,14 @@
 
 #include "net.inl"
 
-static const char* NetNsDir             = "/var/run/netns";
-static const char* CurrentNsFile        = "/proc/self/ns/net";
-static const char* InitNsFile           = "/proc/1/ns/net";
-static const char* PschedParamFile      = "/proc/net/psched";
-static const char* ForwardingSysctlFile = "/proc/sys/net/ipv4/ip_forward";
-static const char* MartianSysctlFile    = "/proc/sys/net/ipv4/conf/all/rp_filter";
-static const char* IPv6SysctlFile       = "/proc/sys/net/ipv6/conf/all/disable_ipv6";
+static const char* NetNsDir                 = "/var/run/netns";
+static const char* CurrentNsFile            = "/proc/self/ns/net";
+static const char* InitNsFile               = "/proc/1/ns/net";
+static const char* PschedParamFile          = "/proc/net/psched";
+static const char* ForwardingSysctlFile     = "/proc/sys/net/ipv4/ip_forward";
+static const char* MartianSysctlFile        = "/proc/sys/net/ipv4/conf/all/rp_filter";
+static const char* MartianSysctlDefaultFile = "/proc/sys/net/ipv4/conf/default/rp_filter";
+static const char* IPv6SysctlFile           = "/proc/sys/net/ipv6/conf/all/disable_ipv6";
 
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
@@ -674,7 +675,15 @@ int netSetForwarding(bool enabled) {
 
 int netSetMartians(bool allow) {
 	lprintf(LogDebug, "%s Martian packets in the active namespace\n", allow ? "Allowing" : "Disallowing");
-	return writeSysctlSetting(MartianSysctlFile, allow ? "0" : "1", 1);
+
+	// We need to write the setting to both the "default" and "all" values
+	// because the kernel uses the maximum of the values as the effective
+	// setting. A consequence of this is that any interfaces that were created
+	// with a higher setting will be unaffected by this call.
+	const char* setting = allow ? "0" : "1";
+	int err = writeSysctlSetting(MartianSysctlFile, setting, 1);
+	if (err != 0) return err;
+	return writeSysctlSetting(MartianSysctlDefaultFile, setting, 1);
 }
 
 int netSetIPv6(bool enabled) {

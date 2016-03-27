@@ -112,13 +112,39 @@ iproute2's bug: if ifi_flags is set to 0, it is implicitly changed to
 observe this hack.
 
 
-3. ip_forward
+SYSCTL SETTINGS
+===============
+1. ip_forward
 -------------
 A Linux IP stack will not forward packets between interfaces unless IP
 forwarding has been enabled in the kernel:
 	echo 1 > /proc/sys/net/ipv4/ip_forward
 This setting can be set per-namespace. The active namespace of the process that
 writes to the file is used to specify the namespace.
+
+2. rp_filter
+------------
+By default, Linux will drop incoming packets with reserved addresses ("Martian"
+packets). The observable effect of this policy is that ip_forward may simply
+appear to be ineffective. Martian packets should be permitted:
+	echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter
+Note that this is a per-interface setting. For example, to allow Martian packets
+on interface veth0:
+	echo 0 > /proc/sys/net/ipv4/conf/veth0/rp_filter
+
+A natural question to ask is "how do the per-interface settings interact with
+the 'all' setting?" The answer to this question is "it depends on the setting".
+When deciding on the effective setting for rp_filter for an interface, the
+kernel will take the maximum value from the per-interface setting and the "all"
+setting. This means that both must be 0 in order to allow Martians. A simple way
+to achieve this, rather than enumerating through all interfaces, is to set the
+default setting:
+	echo 0 > /proc/sys/net/ipv4/conf/default/rp_filter
+Any interfaces created after this call will have rp_filter set to "0".
+
+To see how the "all" setting interacts with per-interface settings for different
+sysctl parameters, see include/linux/inetdevice.h in the kernel sources. At the
+time of this writing, IN_DEV_RPFILTER was defined to use IN_DEV_MAXCONF.
 
 
 TRAFFIC CONTROL

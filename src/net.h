@@ -114,7 +114,10 @@ int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAd
 // namespace. Returns 0 on success or an error code otherwise.
 int netSetForwarding(bool enabled);
 
-// Allows or disallows Martian packets in the active namespace. Returns 0 on
+// Allows or disallows Martian packets in the active namespace. This setting is
+// only guaranteed to operate properly if it is set before any interfaces are
+// added to the namespace; if interfaces were added before this call, then the
+// implications are subtle and depend on the details of the calls. Returns 0 on
 // success or an error code otherwise.
 int netSetMartians(bool allow);
 

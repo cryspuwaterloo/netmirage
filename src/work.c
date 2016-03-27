@@ -212,6 +212,7 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 
 		sprintf(intfBuf, "%s-%u", NodeLinkPrefix, id);
 
+		// Up / down link (used for inter-client communication)
 		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIp, &macs[2], &macs[3], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 
