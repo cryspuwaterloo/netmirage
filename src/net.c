@@ -691,7 +691,23 @@ int netSetIPv6(bool enabled) {
 	return writeSysctlSetting(IPv6SysctlFile, enabled ? "0" : "1", 1);
 }
 
-int netAddRoute(netContext* ctx, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
+int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
+	uint8_t tableId;
+	switch (table) {
+	case TableMain:
+		tableId = RT_TABLE_MAIN;
+		break;
+	case TableLocal:
+		tableId = RT_TABLE_LOCAL;
+		break;
+	default:
+		lprintf(LogError, "Unknown routing table constant %d\n", table);
+		return 1;
+	}
+	return netAddRouteToTable(ctx, tableId, scope, dstAddr, subnetBits, gatewayAddr, dstDevIdx, sync);
+}
+
+int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char dstIp[IP4_ADDR_BUFLEN];
 		char gatewayIp[IP4_ADDR_BUFLEN];
@@ -700,16 +716,27 @@ int netAddRoute(netContext* ctx, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr ga
 		lprintf(LogDebug, "Adding route for namespace %p: %s/%u => interface %d via %sgateway %s\n", ctx, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
 	}
 
-	nlContext* nl = &ctx->nl;
-	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
-
 	struct rtmsg rtm = { .rtm_src_len = 0, .rtm_tos = 0, .rtm_flags = 0 };
 	rtm.rtm_family = AF_INET;
 	rtm.rtm_dst_len = subnetBits;
-	rtm.rtm_table = RT_TABLE_MAIN;
+	rtm.rtm_table = table;
 	rtm.rtm_protocol = RTPROT_STATIC;
-	rtm.rtm_scope = RT_SCOPE_UNIVERSE;
 	rtm.rtm_type = RTN_UNICAST;
+	switch (scope) {
+	case ScopeLink:
+		rtm.rtm_scope = RT_SCOPE_LINK;
+		break;
+	case ScopeGlobal:
+		rtm.rtm_scope = RT_SCOPE_UNIVERSE;
+		break;
+	default:
+		lprintf(LogError, "Unknown routing scope %d\n", scope);
+		return 1;
+	}
+
+	nlContext* nl = &ctx->nl;
+	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
+
 	nlBufferAppend(nl, &rtm, sizeof(rtm));
 
 	nlPushAttr(nl, RTA_DST);

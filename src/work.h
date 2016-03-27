@@ -44,6 +44,10 @@ int workSetSelfLink(nodeId id, const TopoLink* link);
 // NeededMacsLink unique addresses.
 int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link);
 
+// Adds static routing paths for internal links. Node 1 will route packets for
+// subnet2 through node 2. The reverse path is also set up.
+int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, const ip4Subnet* subnet1, const ip4Subnet* subnet2);
+
 // Destroys all hosts created with the network prefix. If deletedHosts is not
 // NULL, the number of deleted hosts is stored. If an error was encountered, the
 // value of deletedHosts is undefined.

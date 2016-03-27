@@ -44,7 +44,7 @@ ip4Addr ip4SubnetStart(const ip4Subnet* subnet);
 ip4Addr ip4SubnetEnd(const ip4Subnet* subnet);
 
 // Returns the number of IP addresses in a subnet.
-uint32_t ip4SubnetSize(const ip4Subnet* subnet, bool excludeReserved);
+uint64_t ip4SubnetSize(const ip4Subnet* subnet, bool excludeReserved);
 
 // Size of a buffer required to hold a NUL-terminated subnet (CIDR notation)
 #define IP4_CIDR_BUFLEN (IP4_ADDR_BUFLEN + 1 + 2 + 1)

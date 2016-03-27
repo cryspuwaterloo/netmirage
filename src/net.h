@@ -125,7 +125,17 @@ int netSetMartians(bool allow);
 // error code otherwise.
 int netSetIPv6(bool enabled);
 
-// Adds a static routing entry to the main routing table. The destination is
+typedef enum {
+	TableMain,
+	TableLocal,
+} RoutingTable;
+
+typedef enum {
+	ScopeLink,
+	ScopeGlobal,
+} RoutingScope;
+
+// Adds a static routing entry to the given routing table. The destination is
 // given by dstAddr with the subnetBits most significant bits specifying the
 // subnet. Packets are routed via the specified gatewayAddr. dstDevIdx
 // identifies the interface through which the packets should be sent. The
@@ -133,4 +143,8 @@ int netSetIPv6(bool enabled);
 // all bits in dstAddr not covered by subnetBits should be set to 0. If
 // gatewayAddr is 0, then no gateway is used. Returns 0 on success or an error
 // code otherwise.
-int netAddRoute(netContext* ctx, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);
+int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);
+
+// This function is the same as netAddRoute, except it allows the caller to
+// provide an explicit table identifier (e.g., to add routes to custom tables).
+int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);

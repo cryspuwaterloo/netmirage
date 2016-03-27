@@ -86,8 +86,8 @@ ip4Addr ip4SubnetEnd(const ip4Subnet* subnet) {
 	return subnet->addr | ip4HostMask(subnet);
 }
 
-uint32_t ip4SubnetSize(const ip4Subnet* subnet, bool excludeReserved) {
-	uint32_t count = 1U << (32 - subnet->prefixLen);
+uint64_t ip4SubnetSize(const ip4Subnet* subnet, bool excludeReserved) {
+	uint64_t count = (uint64_t)1 << ((uint64_t)32 - subnet->prefixLen);
 	if (excludeReserved && count > 2) count -= 2;
 	return count;
 }
@@ -197,15 +197,15 @@ void ip4FreeIter(ip4Iter* it) {
 
 struct ip4FragIter_s {
 	bool first;
-	uint32_t currentAddr; // Host order
-	uint32_t smallIncrement;
+	uint64_t currentAddr; // Host order
+	uint64_t smallIncrement;
 	uint8_t smallPrefixLen;
-	uint32_t largeFragmentsRemaining;
-	uint32_t fragmentsRemaining;
+	uint64_t largeFragmentsRemaining;
+	uint64_t fragmentsRemaining;
 };
 
 ip4FragIter* ip4FragmentSubnet(const ip4Subnet* subnet, uint32_t fragmentCount) {
-	uint32_t parentSize = ip4SubnetSize(subnet, false);
+	uint64_t parentSize = ip4SubnetSize(subnet, false);
 	if (parentSize < fragmentCount) return NULL;
 
 	// Our strategy is to split the subnet into "small" and "large" fragments.
@@ -217,10 +217,10 @@ ip4FragIter* ip4FragmentSubnet(const ip4Subnet* subnet, uint32_t fragmentCount) 
 	double idealFragmentSize = floor((double)parentSize / (double)fragmentCount);
 	fesetround(FE_DOWNWARD);
 	uint8_t smallerPow2 = (uint8_t)llrint(log2(idealFragmentSize));
-	uint32_t smallSize = 1U << smallerPow2;
-	uint32_t totalSmallSize = smallSize * fragmentCount;
-	uint32_t leftoverSize = parentSize - totalSmallSize;
-	uint32_t largeFragments = (uint32_t)llrint((double)leftoverSize / (double)smallSize);
+	uint64_t smallSize = 1U << smallerPow2;
+	uint64_t totalSmallSize = smallSize * fragmentCount;
+	uint64_t leftoverSize = parentSize - totalSmallSize;
+	uint64_t largeFragments = (uint64_t)llrint((double)leftoverSize / (double)smallSize);
 
 	ip4FragIter* it = emalloc(sizeof(ip4FragIter));
 	it->first = true;
@@ -248,7 +248,7 @@ bool ip4FragIterNext(ip4FragIter* it) {
 }
 
 void ip4FragIterSubnet(const ip4FragIter* it, ip4Subnet* fragment) {
-	fragment->addr = htonl(it->currentAddr);
+	fragment->addr = htonl((uint32_t)it->currentAddr);
 	fragment->prefixLen = (uint8_t)(it->largeFragmentsRemaining > 0 ? it->smallPrefixLen - 1 : it->smallPrefixLen);
 }
 

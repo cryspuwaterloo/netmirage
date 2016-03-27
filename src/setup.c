@@ -2,6 +2,8 @@
 
 #include "setup.h"
 
+#include <fenv.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +26,12 @@ int setupInit(const setupParams* params) {
 	globalParams = params;
 	int res = workInit(params->nsPrefix, params->softMemCap);
 	if (res != 0) return res;
+
+	if (params->edgeNodeCount < 1) {
+		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
+		res = 1;
+		goto cleanup;
+	}
 
 	// Complete definitions for edge nodes by filling in default / missing data
 	size_t edgeSubnetsNeeded = 0;
@@ -92,11 +100,6 @@ int setupInit(const setupParams* params) {
 		ip4AddrToString(edge->ip, ip);
 		macAddrToString(&edge->mac, mac);
 		ip4SubnetToString(&edge->vsubnet, subnet);
-		if (ip4SubnetSize(&edge->vsubnet, true) < 2) {
-			lprintf(LogError, "Edge node with IP %s has subnet %s, which is not large enough to use libipaddr to forward traffic to the emulator\n", ip, subnet);
-			subnetErr = true;
-			break;
-		}
 		lprintf(LogInfo, "Configured edge node: IP %s, interface %s, MAC %s, client subnet %s\n", ip, edge->intf, mac, subnet);
 	}
 	if (subnetErr) {
@@ -133,19 +136,32 @@ int destroyNetwork(void) {
 \******************************************************************************/
 
 typedef struct {
-	nodeId id;
 	ip4Addr addr; // Duplicated for all interfaces
 	bool isClient;
+	ip4Subnet clientSubnet;
 } gmlNodeState;
 
 typedef struct {
 	bool finishedNodes;
 	bool ignoreNodes;
 	bool ignoreEdges;
-	GHashTable* gmlToState; // Maps GraphML names to gmlNodeState pointers
-	nodeId nextId;
+
+	// Variable-sized buffer for storing all node states
+	gmlNodeState* nodeStates;
+	size_t nodeCount;   // Total number of nodes (client + non-client)
+	size_t clientNodes; // Total number of client nodes
+	size_t nodeCap;
+	GHashTable* gmlToState; // Maps GraphML names to indices in nodeStates
+
+	double clientsPerEdge;
+	edgeNodeParams* currentEdge;
+	nodeId currentEdgeClients;
+	nodeId filledEdges;
+	ip4FragIter* clientIter;
+
 	ip4Iter* intfAddrIter;
 	macAddr macAddrIter;
+
 	routePlanner* routes;
 } gmlContext;
 
@@ -162,11 +178,14 @@ static void gmlGenerateIp(gmlContext* ctx, bool* addrExhausted, ip4Addr* addr) {
 
 // Looks up the node state for a given string identifier from the GraphML file.
 // If the state does not exist, and "node" is not NULL, then a new state is
-// created and cached. Otherwise, an error occurs. Returns NULL on error.
-static gmlNodeState* gmlNameToState(gmlContext* ctx, const char* name, const TopoNode* node) {
+// created and cached. Otherwise, an error occurs. Returns true on success, in
+// which case "id" and "state" are set. Otherwise, returns false and their
+// values are undefined.
+static bool gmlNameToState(gmlContext* ctx, const char* name, const TopoNode* node, nodeId* id, gmlNodeState** state) {
 	gpointer ptr;
 	gboolean exists = g_hash_table_lookup_extended(ctx->gmlToState, name, NULL, &ptr);
-	gmlNodeState* state = ptr;
+	size_t index = GPOINTER_TO_SIZE(ptr);
+	*state = &ctx->nodeStates[index];
 	if (!exists) {
 		if (node == NULL) {
 			lprintf(LogError, "Requested existing state for unknown host '%s'\n", name);
@@ -180,12 +199,16 @@ static gmlNodeState* gmlNameToState(gmlContext* ctx, const char* name, const Top
 			return NULL;
 		}
 
-		state = emalloc(sizeof(gmlNodeState));
-		state->id = ctx->nextId++;
-		state->addr = newAddr;
-		state->isClient = node->client;
-		g_hash_table_insert(ctx->gmlToState, (gpointer)strdup(name), state);
+		index = ctx->nodeCount++;
+
+		flexBufferGrow((void**)&ctx->nodeStates, ctx->nodeCount, &ctx->nodeCap, 1, sizeof(gmlNodeState));
+		g_hash_table_insert(ctx->gmlToState, (gpointer)strdup(name), GSIZE_TO_POINTER(index));
+
+		*state = &ctx->nodeStates[index];
+		(*state)->addr = newAddr;
+		(*state)->isClient = node->client;
 	}
+	*id = (nodeId)index;
 	return state;
 }
 
@@ -197,8 +220,9 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 		return 1;
 	}
 
-	gmlNodeState* state = gmlNameToState(ctx, node->name, &node->t);
-	if (state == NULL) return 1;
+	nodeId id;
+	gmlNodeState* state;
+	if (!gmlNameToState(ctx, node->name, &node->t, &id, &state)) return 1;
 
 	macAddr macs[NeededMacsClient];
 	if (node->t.client) {
@@ -206,15 +230,16 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 			lprintln(LogError, "Ran out of MAC addresses when creating a new client node.");
 			return 1;
 		}
+		++ctx->clientNodes;
 	}
 
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char ip[IP4_ADDR_BUFLEN];
 		ip4AddrToString(state->addr, ip);
-		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, state->id, ip);
+		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, id, ip);
 	}
 
-	return workAddHost(state->id, state->addr, macs, &node->t);
+	return workAddHost(id, state->addr, macs, &node->t);
 }
 
 static int gmlAddLink(const GmlLink* link, void* userData) {
@@ -222,18 +247,27 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 	if (ctx->ignoreEdges) return 0;
 	if (!ctx->finishedNodes) {
 		ctx->finishedNodes = true;
+
 		lprintln(LogInfo, "Host creation complete. Now adding virtual ethernet connections.");
-		ctx->routes = rpNewPlanner(ctx->nextId);
+		lprintf(LogDebug, "Encountered %u nodes (%u clients)\n", ctx->nodeCount, ctx->clientNodes);
+		if (ctx->clientNodes < globalParams->edgeNodeCount) {
+			lprintf(LogError, "There are fewer client nodes in the topology (%u) than edges nodes (%u). Either use a larger topology, or decrease the number of edge nodes.\n", ctx->clientNodes, globalParams->edgeNodeCount);
+			return 1;
+		}
+		ctx->clientsPerEdge = (double)ctx->clientNodes / (double)globalParams->edgeNodeCount;
+		ctx->routes = rpNewPlanner((nodeId)ctx->nodeCount);
 	}
 
-	gmlNodeState* sourceState = gmlNameToState(ctx, link->sourceName, NULL);
-	gmlNodeState* targetState = gmlNameToState(ctx, link->targetName, NULL);
-	if (sourceState == NULL || targetState == NULL) return 1;
+	nodeId sourceId, targetId;
+	gmlNodeState* sourceState;
+	gmlNodeState* targetState;
+	if (!gmlNameToState(ctx, link->sourceName, NULL, &sourceId, &sourceState)) return 1;
+	if (!gmlNameToState(ctx, link->targetName, NULL, &targetId, &targetState)) return 1;
 
 	int res = 0;
-	if (sourceState == targetState) {
+	if (sourceId == targetId) {
 		if (sourceState->isClient) {
-			res = workSetSelfLink(sourceState->id, &link->t);
+			res = workSetSelfLink(sourceId, &link->t);
 		}
 	} else {
 		macAddr macs[NeededMacsLink];
@@ -241,17 +275,60 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			lprintln(LogError, "Ran out of MAC addresses when adding a new virtual ethernet connection.");
 			return 1;
 		}
-		res = workAddLink(sourceState->id, targetState->id, sourceState->addr, targetState->addr, macs, &link->t);
+		res = workAddLink(sourceId, targetId, sourceState->addr, targetState->addr, macs, &link->t);
 		if (res == 0) {
 			if (link->weight < 0.f) {
 				lprintf(LogError, "The link from '%s' to '%s' in the topology has negative weight %f, which is not supported.\n", link->sourceName, link->targetName, link->weight);
 				res = 1;
 			} else {
-				rpSetWeight(ctx->routes, sourceState->id, targetState->id, link->weight);
+				rpSetWeight(ctx->routes, sourceId, targetId, link->weight);
+				rpSetWeight(ctx->routes, targetId, sourceId, link->weight);
 			}
 		}
 	}
 	return res;
+}
+
+static bool gmlNextEdge(gmlContext* ctx) {
+	if (ctx->currentEdge == NULL) {
+		ctx->currentEdge = globalParams->edgeNodes;
+		ctx->filledEdges = 0;
+	} else {
+		++ctx->filledEdges;
+		if (ctx->filledEdges >= globalParams->edgeNodeCount) {
+			ctx->currentEdge = NULL;
+			return false;
+		}
+		++ctx->currentEdge;
+		ip4FreeFragIter(ctx->clientIter);
+	}
+	ctx->currentEdgeClients = 0;
+
+	// This approach avoids numerical robustness problems
+	double prevMarker = round(ctx->clientsPerEdge * ctx->filledEdges);
+	double nextMarker = round(ctx->clientsPerEdge * (ctx->filledEdges+1));
+	fesetround(FE_TONEAREST);
+	nodeId currentEdgeCapacity = (nodeId)llrint(nextMarker - prevMarker);
+
+	ctx->clientIter = ip4FragmentSubnet(&ctx->currentEdge->vsubnet, currentEdgeCapacity);
+	if (!ip4FragIterNext(ctx->clientIter)) return false;
+
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char edgeIp[IP4_ADDR_BUFLEN];
+		char edgeSubnet[IP4_CIDR_BUFLEN];
+		ip4AddrToString(ctx->currentEdge->ip, edgeIp);
+		ip4SubnetToString(&ctx->currentEdge->vsubnet, edgeSubnet);
+		lprintf(LogDebug, "Now allocating %u client subnets for edge %s (range %s)\n", currentEdgeCapacity, edgeIp, edgeSubnet);
+	}
+	return true;
+}
+
+static bool gmlNextClientSubnet(gmlContext* ctx, ip4Subnet* subnet) {
+	if (ctx->clientIter == NULL || !ip4FragIterNext(ctx->clientIter)) {
+		if (!gmlNextEdge(ctx)) return false;
+	}
+	ip4FragIterSubnet(ctx->clientIter, subnet);
+	return true;
 }
 
 int setupGraphML(const setupGraphMLParams* gmlParams) {
@@ -261,12 +338,17 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		.finishedNodes = false,
 		.ignoreNodes = false,
 		.ignoreEdges = false,
-		.nextId = 0,
+
+		.clientNodes = 0,
+
+		.clientIter = NULL,
 		.macAddrIter = { .octets = { 0 } },
+
 		.routes = NULL,
 	};
 	macNextAddr(&ctx.macAddrIter); // Skip all-zeroes address (unassignable)
-	ctx.gmlToState = g_hash_table_new_full(&g_str_hash, &g_str_equal, &gmlFreeData, &gmlFreeData);
+	flexBufferInit((void**)&ctx.nodeStates, &ctx.nodeCount, &ctx.nodeCap);
+	ctx.gmlToState = g_hash_table_new_full(&g_str_hash, &g_str_equal, &gmlFreeData, NULL);
 
 	// We assign internal interface addresses from the full IPv4 space, but
 	// avoid the subnets reserved for the edge nodes. The fact that the
@@ -332,6 +414,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	}
 
 	// Host and link construction is finished. Now we set up routing
+	lprintln(LogInfo, "Setting up static routing for the network");
 
 	if (ctx.routes == NULL) {
 		lprintln(LogError, "Network topology did not contain any links");
@@ -340,37 +423,65 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	}
 	rpPlanRoutes(ctx.routes);
 
-	GHashTableIter it1, it2;
-	g_hash_table_iter_init(&it1, ctx.gmlToState);
+	lprintf(LogDebug, "Assigning %u client nodes to %u edge nodes\n", ctx.clientNodes, globalParams->edgeNodeCount);
+	for (size_t id = 0; id < ctx.nodeCount; ++id) {
+		gmlNodeState* node = &ctx.nodeStates[id];
+		if (!node->isClient) continue;
 
-	gpointer key1, val1, key2, val2;
+		if (!gmlNextClientSubnet(&ctx, &node->clientSubnet)) {
+			lprintln(LogError, "BUG: exhausted client node subnet space");
+			goto cleanup;
+		}
+		if (PASSES_LOG_THRESHOLD(LogDebug)) {
+			char subnet[IP4_CIDR_BUFLEN];
+			ip4SubnetToString(&node->clientSubnet, subnet);
+			lprintf(LogDebug, "Assigned client node %u to subnet %s\n", id, subnet);
+		}
+	}
+
+	// Build routes between every pair of client nodes
+	lprintln(LogDebug, "Adding static routes along paths for all client node pairs");
 	bool seenUnroutable = false;
-	while (g_hash_table_iter_next(&it1, &key1, &val1)) {
-		gmlNodeState* start = val1;
+	for (nodeId startId = 0; startId < ctx.nodeCount; ++startId) {
+		gmlNodeState* start = &ctx.nodeStates[startId];
 		if (!start->isClient) continue;
 
-		it2 = it1;
-		while (g_hash_table_iter_next(&it2, &key2, &val2)) {
-			gmlNodeState* end = val2;
+		for (nodeId endId = startId+1; endId < ctx.nodeCount; ++endId) {
+			gmlNodeState* end = &ctx.nodeStates[endId];
 			if (!end->isClient) continue;
 
-			lprintf(LogDebug, "Constructing route from client '%s' to '%s'\n", (char*)key1, (char*)key2);
+			lprintf(LogDebug, "Constructing route from client %u to %u\n", startId, endId);
 			nodeId* path;
 			nodeId steps;
-			if (!rpGetRoute(ctx.routes, start->id, end->id, &path, &steps)) {
+			if (!rpGetRoute(ctx.routes, startId, endId, &path, &steps)) {
 				if (!seenUnroutable) {
-					lprintf(LogWarning, "Topology contains unconnected client nodes (e.g., '%s' to '%s' is unroutable)\n", (char*)key1, (char*)key2);
+					lprintf(LogWarning, "Topology contains unconnected client nodes (e.g., %u to %u is unroutable)\n", startId, endId);
 					seenUnroutable = true;
 				}
 				continue;
 			}
+			if (steps < 2) {
+				lprintf(LogError, "BUG: route from client %u to %u has %d steps\n", startId, endId, steps);
+				continue;
+			}
 
+			nodeId prevId = path[0];
+			for (nodeId step = 1; step < steps; ++step) {
+				nodeId nextId = path[step];
+				lprintf(LogDebug, "Hop %d for %u => %u: %u => %u\n", step, startId, endId, prevId, nextId);
+				err = workAddInternalRoutes(prevId, nextId, ctx.nodeStates[prevId].addr, ctx.nodeStates[nextId].addr, &start->clientSubnet, &end->clientSubnet);
+				if (err != 0) goto cleanup;
+
+				prevId = nextId;
+			}
 		}
 	}
 
 cleanup:
+	if (ctx.clientIter != NULL) ip4FreeFragIter(ctx.clientIter);
 	if (ctx.routes != NULL) rpFreePlan(ctx.routes);
 	g_hash_table_destroy(ctx.gmlToState);
 	ip4FreeIter(ctx.intfAddrIter);
+	flexBufferFree((void**)&ctx.nodeStates, &ctx.nodeCount, &ctx.nodeCap);
 	return err;
 }

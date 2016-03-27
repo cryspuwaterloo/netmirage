@@ -242,24 +242,35 @@ int workSetSelfLink(nodeId id, const TopoLink* link) {
 	return netSetEgressShaping(net, intfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
 }
 
+static int workGetLinkEndpoints(nodeId id1, nodeId id2, char* name1, char* name2, netContext** net1, netContext** net2, char* intf1, char* intf2) {
+	idToNsName(id1, name1);
+	idToNsName(id2, name2);
+
+	int err;
+	*net1 = ncOpenNamespace(nc, id1, name1, false, &err);
+	if (*net1 == NULL) return err;
+	*net2 = ncOpenNamespace(nc, id2, name2, false, &err);
+	if (*net2 == NULL) return err;
+
+	sprintf(intf1, "%s-%u", NodeLinkPrefix, id2);
+	sprintf(intf2, "%s-%u", NodeLinkPrefix, id1);
+
+	return 0;
+}
+
 int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link) {
 	char sourceName[MAX_NODE_ID_BUFLEN];
 	char targetName[MAX_NODE_ID_BUFLEN];
-	idToNsName(sourceId, sourceName);
-	idToNsName(targetId, targetName);
-
-	lprintf(LogDebug, "Creating virtual connection from host %s to host %s\n", sourceName, targetName);
-
-	int err;
-	netContext* sourceNet = ncOpenNamespace(nc, sourceId, sourceName, false, &err);
-	if (sourceNet == NULL) return err;
-	netContext* targetNet = ncOpenNamespace(nc, targetId, targetName, false, &err);
-	if (targetNet == NULL) return err;
-
+	netContext* sourceNet;
+	netContext* targetNet;
 	char sourceIntf[InterfaceBufLen];
 	char targetIntf[InterfaceBufLen];
-	sprintf(sourceIntf, "%s-%u", NodeLinkPrefix, targetId);
-	sprintf(targetIntf, "%s-%u", NodeLinkPrefix, sourceId);
+
+	int err;
+	err = workGetLinkEndpoints(sourceId, targetId, sourceName, targetName, &sourceNet, &targetNet, sourceIntf, targetIntf);
+	if (err != 0) return err;
+
+	lprintf(LogDebug, "Creating virtual connection from host %s to host %s\n", sourceName, targetName);
 
 	int sourceIntfIdx, targetIntfIdx;
 
@@ -271,9 +282,46 @@ int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targ
 	err = netSetEgressShaping(targetNet, targetIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
 	if (err != 0) return err;
 
-	err = netAddRoute(sourceNet, targetIp, 32, 0, sourceIntfIdx, true);
+	err = netAddRoute(sourceNet, TableMain, ScopeLink, targetIp, 32, 0, sourceIntfIdx, true);
 	if (err != 0) return err;
-	err = netAddRoute(targetNet, sourceIp, 32, 0, targetIntfIdx, true);
+	err = netAddRoute(targetNet, TableMain, ScopeLink, sourceIp, 32, 0, targetIntfIdx, true);
+	if (err != 0) return err;
+
+	return 0;
+}
+
+int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, const ip4Subnet* subnet1, const ip4Subnet* subnet2) {
+	char name1[MAX_NODE_ID_BUFLEN];
+	char name2[MAX_NODE_ID_BUFLEN];
+	netContext* net1;
+	netContext* net2;
+	char intf1[InterfaceBufLen];
+	char intf2[InterfaceBufLen];
+
+	int err;
+	err = workGetLinkEndpoints(id1, id2, name1, name2, &net1, &net2, intf1, intf2);
+	if (err != 0) return err;
+
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char ip1Str[IP4_ADDR_BUFLEN];
+		char ip2Str[IP4_ADDR_BUFLEN];
+		char subnet1Str[IP4_CIDR_BUFLEN];
+		char subnet2Str[IP4_CIDR_BUFLEN];
+		ip4AddrToString(ip1, ip1Str);
+		ip4AddrToString(ip2, ip2Str);
+		ip4SubnetToString(subnet1, subnet1Str);
+		ip4SubnetToString(subnet2, subnet2Str);
+		lprintf(LogDebug, "Adding internal routes from %u / %s (for %s) to %u / %s (for %s)\n", id1, ip1Str, subnet1Str, id2, ip2Str, subnet2Str);
+	}
+
+	int intfIdx1 = netGetInterfaceIndex(net1, intf1, &err);
+	if (intfIdx1 == -1) return err;
+	int intfIdx2 = netGetInterfaceIndex(net2, intf2, &err);
+	if (intfIdx2 == -1) return err;
+
+	err = netAddRoute(net1, TableMain, ScopeGlobal, subnet2->addr, subnet2->prefixLen, ip2, intfIdx1, true);
+	if (err != 0) return err;
+	err = netAddRoute(net2, TableMain, ScopeGlobal, subnet1->addr, subnet1->prefixLen, ip1, intfIdx2, true);
 	if (err != 0) return err;
 
 	return 0;
