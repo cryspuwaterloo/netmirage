@@ -40,6 +40,10 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node);
 // Applies traffic shaping parameters to a client node's "self" link.
 int workSetSelfLink(nodeId id, const TopoLink* link);
 
+// Sets system parameters to ensure that the kernel allocates enough resources
+// for the network. This should be called before adding any links or routes.
+int workEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clientNodes);
+
 // Adds a virtual connection between two hosts. macs should contain
 // NeededMacsLink unique addresses.
 int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link);

@@ -125,6 +125,16 @@ int netSetMartians(bool allow);
 // error code otherwise.
 int netSetIPv6(bool enabled);
 
+// Gets the garbage collector thresholds for the system-wide ARP hash table.
+// Must be called within the init namespace. Returns 0 on success or an error
+// code otherwise.
+int netGetArpTableSize(int* thresh1, int* thresh2, int* thresh3);
+
+// Sets the garbage collector thresholds for the system-wide ARP hash table.
+// Must be called within the init namespace. Returns 0 on success or an error
+// code otherwise.
+int netSetArpTableSize(int thresh1, int thresh2, int thresh3);
+
 typedef enum {
 	TableMain,
 	TableLocal,

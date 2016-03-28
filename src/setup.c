@@ -244,6 +244,8 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 
 static int gmlAddLink(const GmlLink* link, void* userData) {
 	gmlContext* ctx = userData;
+	int res = 0;
+
 	if (ctx->ignoreEdges) return 0;
 	if (!ctx->finishedNodes) {
 		ctx->finishedNodes = true;
@@ -254,6 +256,11 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			lprintf(LogError, "There are fewer client nodes in the topology (%u) than edges nodes (%u). Either use a larger topology, or decrease the number of edge nodes.\n", ctx->clientNodes, globalParams->edgeNodeCount);
 			return 1;
 		}
+
+		uint64_t worstCaseLinkCount = (uint64_t)ctx->nodeCount * (uint64_t)ctx->nodeCount;
+		res = workEnsureSystemScaling(worstCaseLinkCount, (nodeId)ctx->nodeCount, (nodeId)ctx->clientNodes);
+		if (res != 0) return res;
+
 		ctx->clientsPerEdge = (double)ctx->clientNodes / (double)globalParams->edgeNodeCount;
 		ctx->routes = rpNewPlanner((nodeId)ctx->nodeCount);
 	}
@@ -264,7 +271,6 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 	if (!gmlNameToState(ctx, link->sourceName, NULL, &sourceId, &sourceState)) return 1;
 	if (!gmlNameToState(ctx, link->targetName, NULL, &targetId, &targetState)) return 1;
 
-	int res = 0;
 	if (sourceId == targetId) {
 		if (sourceState->isClient) {
 			res = workSetSelfLink(sourceId, &link->t);

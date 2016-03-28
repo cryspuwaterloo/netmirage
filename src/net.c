@@ -47,14 +47,16 @@
 
 #include "net.inl"
 
-static const char* NetNsDir                 = "/var/run/netns";
-static const char* CurrentNsFile            = "/proc/self/ns/net";
-static const char* InitNsFile               = "/proc/1/ns/net";
-static const char* PschedParamFile          = "/proc/net/psched";
-static const char* ForwardingSysctlFile     = "/proc/sys/net/ipv4/ip_forward";
-static const char* MartianSysctlFile        = "/proc/sys/net/ipv4/conf/all/rp_filter";
-static const char* MartianSysctlDefaultFile = "/proc/sys/net/ipv4/conf/default/rp_filter";
-static const char* IPv6SysctlFile           = "/proc/sys/net/ipv6/conf/all/disable_ipv6";
+#define NET_NS_DIR        "/var/run/netns"
+#define CURRENT_NS_FILE   "/proc/self/ns/net"
+#define INIT_NS_FILE      "/proc/1/ns/net"
+#define PSCHED_PARAM_FILE "/proc/net/psched"
+
+#define SYSCTL_FORWARDING       "/proc/sys/net/ipv4/ip_forward"
+#define SYSCTL_MARTIANS         "/proc/sys/net/ipv4/conf/all/rp_filter"
+#define SYSCTL_MARTIANS_DEFAULT "/proc/sys/net/ipv4/conf/default/rp_filter"
+#define SYSCTL_DISABLE_IPV6     "/proc/sys/net/ipv6/conf/all/disable_ipv6"
+#define SYSCTL_ARP_GC_PREFIX    "/proc/sys/net/ipv4/neigh/default/gc_thresh"
 
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
@@ -64,8 +66,8 @@ const size_t InterfaceBufLen = IFNAMSIZ;
 // Ensures that the network namespace folders exist and are mounted.
 static int setupNamespaceEnvironment(void) {
 	errno = 0;
-	if (mkdir(NetNsDir, 0755) != 0 && errno != EEXIST) {
-		lprintf(LogError, "Could not create the system network namespace directory '%s': %s. Elevation may be required.\n", NetNsDir, strerror(errno));
+	if (mkdir(NET_NS_DIR, 0755) != 0 && errno != EEXIST) {
+		lprintf(LogError, "Could not create the system network namespace directory '" NET_NS_DIR "': %s. Elevation may be required.\n", strerror(errno));
 		return errno;
 	}
 
@@ -75,17 +77,17 @@ static int setupNamespaceEnvironment(void) {
 	bool madeBind = false;
 	while (!createdMount) {
 		errno = 0;
-		if (mount("", NetNsDir, "none", MS_SHARED | MS_REC, NULL) == 0) {
+		if (mount("", NET_NS_DIR, "none", MS_SHARED | MS_REC, NULL) == 0) {
 			lprintln(LogDebug, "Mounted system network namespace directory");
 			createdMount = true;
 		} else if (!madeBind && errno == EINVAL) {
 			errno = 0;
 			lprintln(LogDebug, "Bind mounting system network namespace directory");
-			mount(NetNsDir, NetNsDir, "none", MS_BIND, NULL);
+			mount(NET_NS_DIR, NET_NS_DIR, "none", MS_BIND, NULL);
 			madeBind = true;
 		}
 		if (errno != 0) {
-			lprintf(LogError, "Could not mount the system network namespace directory '%s': %s. Elevation may be required.\n", NetNsDir, strerror(errno));
+			lprintf(LogError, "Could not mount the system network namespace directory '" NET_NS_DIR "': %s. Elevation may be required.\n", strerror(errno));
 			return errno;
 		}
 	}
@@ -118,14 +120,14 @@ int netInit(const char* prefix) {
 	// meaning of parameters has been lost since Linux kernel version 2.6. We
 	// use the new interpretation of the parameters, unlike tc.
 	errno = 0;
-	FILE* fd = fopen(PschedParamFile, "r");
+	FILE* fd = fopen(PSCHED_PARAM_FILE, "r");
 	if (fd == NULL) {
-		lprintf(LogError, "Could not open psched parameter file (%s): %s\n", PschedParamFile, strerror(errno));
+		lprintf(LogError, "Could not open psched parameter file ('" PSCHED_PARAM_FILE "'): %s\n", strerror(errno));
 		return errno;
 	}
 	uint32_t unused, nsPerTick;
 	if (fscanf(fd, "%08x %08x ", &unused, &nsPerTick) < 2) {
-		lprintf(LogError, "Failed to read psched parameter file (%s)\n", PschedParamFile);
+		lprintln(LogError, "Failed to read psched parameter file ('" PSCHED_PARAM_FILE "')");
 	}
 	fclose(fd);
 	const double nsPerMs = 1000000.0;
@@ -142,7 +144,7 @@ void netCleanup(void) {
 
 // Computes the file path for a given namespace.
 static int getNamespacePath(char* buffer, const char* name) {
-	int res = snprintf(buffer, PATH_MAX, "%s/%s%s", NetNsDir, namespacePrefix, name);
+	int res = snprintf(buffer, PATH_MAX, NET_NS_DIR "/%s%s", namespacePrefix, name);
 	if (res < 0) return res;
 	else if (res >= PATH_MAX) return -1;
 	return 0;
@@ -166,7 +168,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 	const char* netNsPath;
 	char pathBuffer[PATH_MAX];
 	if (name == NULL) {
-		netNsPath = InitNsFile;
+		netNsPath = INIT_NS_FILE;
 	} else {
 		err = getNamespacePath(pathBuffer, name);
 		if (err != 0) return err;
@@ -203,7 +205,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 		// is explicitly unmounted; there is no need to keep a dedicated process
 		// bound to it.
 		errno = 0;
-		if (mount(CurrentNsFile, netNsPath, "none", MS_BIND, NULL) != 0) {
+		if (mount(CURRENT_NS_FILE, netNsPath, "none", MS_BIND, NULL) != 0) {
 			lprintf(LogError, "Failed to bind new network namespace file '%s': %s\n", netNsPath, strerror(errno));
 			goto abort;
 		}
@@ -284,7 +286,7 @@ int netDeleteNamespace(const char* name) {
 
 int netEnumNamespaces(netNsCallback callback, void* userData) {
 	errno = 0;
-	DIR* d = opendir(NetNsDir);
+	DIR* d = opendir(NET_NS_DIR);
 	if (d == NULL) return errno;
 
 	size_t compareLen = strlen(namespacePrefix);
@@ -326,7 +328,7 @@ int netSwitchNamespace(netContext* ctx) {
 		nsFd = ctx->fd;
 	} else {
 		lprintln(LogDebug, "Switching to default network namespace");
-		nsFd = open(InitNsFile, O_RDONLY | O_CLOEXEC);
+		nsFd = open(INIT_NS_FILE, O_RDONLY | O_CLOEXEC);
 		if (nsFd == -1) {
 			lprintf(LogError, "Failed to open init network namespace file: %s\n", strerror(errno));
 			return errno;
@@ -650,27 +652,33 @@ int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAd
 	return EAGAIN;
 }
 
-static int writeSysctlSetting(const char* filePath, const char* value, size_t len) {
+static int readSysctlFmt(const char* filePath, const char* fmt, void* value) {
 	errno = 0;
-	int fd = open(filePath, O_WRONLY);
-	if (fd == -1) return errno;
+	FILE* f = fopen(filePath, "r");
+	if (f == NULL) return errno;
 
-	ssize_t res;
-	do {
-		errno = 0;
-		res = write(fd, value, len);
-		if (res == -1) goto abort;
-	} while (res < 1);
+	int res = fscanf(f, fmt, value);
+	fclose(f);
+	return (res == 1) ? 0 : 1;
+}
 
+static int writeSysctlFmt(const char* filePath, const char* fmt, ...) {
 	errno = 0;
-abort:
-	close(fd);
-	return errno;
+	FILE* f = fopen(filePath, "w");
+	if (f == NULL) return errno;
+
+	va_list args;
+	va_start(args, fmt);
+	int res = vfprintf(f, fmt, args);
+	va_end(args);
+
+	fclose(f);
+	return (res < 0) ? 1 : 0;
 }
 
 int netSetForwarding(bool enabled) {
 	lprintf(LogDebug, "Turning %s IP forwarding (routing) for the active namespace\n", enabled ? "on" : "off");
-	return writeSysctlSetting(ForwardingSysctlFile, enabled ? "1" : "0", 1);
+	return writeSysctlFmt(SYSCTL_FORWARDING, enabled ? "1" : "0");
 }
 
 int netSetMartians(bool allow) {
@@ -681,14 +689,40 @@ int netSetMartians(bool allow) {
 	// setting. A consequence of this is that any interfaces that were created
 	// with a higher setting will be unaffected by this call.
 	const char* setting = allow ? "0" : "1";
-	int err = writeSysctlSetting(MartianSysctlFile, setting, 1);
+	int err = writeSysctlFmt(SYSCTL_MARTIANS, setting);
 	if (err != 0) return err;
-	return writeSysctlSetting(MartianSysctlDefaultFile, setting, 1);
+	return writeSysctlFmt(SYSCTL_MARTIANS_DEFAULT, setting);
 }
 
 int netSetIPv6(bool enabled) {
 	lprintf(LogDebug, "Turning %s IPv6 support in the active namespace\n", enabled ? "on" : "off");
-	return writeSysctlSetting(IPv6SysctlFile, enabled ? "0" : "1", 1);
+	return writeSysctlFmt(SYSCTL_DISABLE_IPV6, enabled ? "0" : "1");
+}
+
+int netGetArpTableSize(int* thresh1, int* thresh2, int* thresh3) {
+	int err;
+
+	err = readSysctlFmt(SYSCTL_ARP_GC_PREFIX "1", "%d", thresh1);
+	if (err != 0) return err;
+	err = readSysctlFmt(SYSCTL_ARP_GC_PREFIX "2", "%d", thresh2);
+	if (err != 0) return err;
+	err = readSysctlFmt(SYSCTL_ARP_GC_PREFIX "3", "%d", thresh3);
+	if (err != 0) return err;
+
+	return 0;
+}
+
+int netSetArpTableSize(int thresh1, int thresh2, int thresh3) {
+	int err;
+
+	err = writeSysctlFmt(SYSCTL_ARP_GC_PREFIX "1", "%d", thresh1);
+	if (err != 0) return err;
+	err = writeSysctlFmt(SYSCTL_ARP_GC_PREFIX "2", "%d", thresh2);
+	if (err != 0) return err;
+	err = writeSysctlFmt(SYSCTL_ARP_GC_PREFIX "3", "%d", thresh3);
+	if (err != 0) return err;
+
+	return 0;
 }
 
 int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {

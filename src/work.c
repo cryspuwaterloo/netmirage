@@ -1,6 +1,7 @@
 #include "work.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -254,6 +255,47 @@ static int workGetLinkEndpoints(nodeId id1, nodeId id2, char* name1, char* name2
 
 	sprintf(intf1, "%s-%u", NodeLinkPrefix, id2);
 	sprintf(intf2, "%s-%u", NodeLinkPrefix, id1);
+
+	return 0;
+}
+
+int workEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clientNodes) {
+	lprintf(LogDebug, "Preparing system to handle %u nodes (%u clients) and %lu links\n", nodeCount, clientNodes, linkCount);
+
+	int err;
+	err = netSwitchNamespace(defaultNet);
+	if (err != 0) return err;
+
+	// Ensure that the system-wide ARP hash table is large enough to hold static
+	// routing entries for every interface in the network.
+
+	int arpThresh1, arpThresh2, arpThresh3;
+	err = netGetArpTableSize(&arpThresh1, &arpThresh2, &arpThresh3);
+	if (err != 0) return err;
+
+	uint64_t fudgeFactor = 100; // In case a few extras are needed
+	uint64_t neededArpEntries = 2LU * linkCount + 3LU * (uint64_t)clientNodes + fudgeFactor;
+	if (neededArpEntries > INT_MAX) {
+		lprintf(LogError, "The topology is too large. The kernel cannot support the required number of static ARP entries (%lu)\n", neededArpEntries);
+		return 1;
+	}
+
+	lprintf(LogDebug, "Existing ARP GC thresholds were (%d, %d, %d)\n", arpThresh1, arpThresh2, arpThresh3);
+
+	if ((int)neededArpEntries > arpThresh2) {
+		lprintf(LogWarning, "The system's ARP table size (garbage collection at %d entries) is too small to support this topology (expected entries %lu).\n", arpThresh2, neededArpEntries);
+
+		int extraSpace = (int)neededArpEntries - arpThresh2;
+		int newThresh1 = arpThresh1 + extraSpace;
+		int newThresh2 = arpThresh2 + extraSpace;
+		int newThresh3 = arpThresh3 + extraSpace;
+		err = netSetArpTableSize(newThresh1, newThresh2, newThresh3);
+		if (err != 0) {
+			lprintln(LogError, "Could not modify the ARP table size to support the network topology.");
+			return err;
+		}
+		lprintf(LogWarning, "The system's ARP thresholds have been set to (%d, %d, %d), which may degrade the performance of the system. After finishing the experiments, we recommend setting the values back to (%d, %d, %d).\n", newThresh1, newThresh2, newThresh3, arpThresh1, arpThresh2, arpThresh3);
+	}
 
 	return 0;
 }

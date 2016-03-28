@@ -146,6 +146,30 @@ To see how the "all" setting interacts with per-interface settings for different
 sysctl parameters, see include/linux/inetdevice.h in the kernel sources. At the
 time of this writing, IN_DEV_RPFILTER was defined to use IN_DEV_MAXCONF.
 
+3. gc_thresh*
+-------------
+At the time of this writing, network namespaces do not have fully separate ARP
+tables. While each namespace appears to have its own ARP table (e.g., "arp" or
+"ip neigh" will both show namespace-specific entries), the actual storage for
+the ARP table is shared for all namespaces. The size of this internal hash table
+is governed by several system-wide sysctl settings:
+	net.ipv4.neigh.default.gc_thresh1
+	net.ipv4.neigh.default.gc_thresh2
+	net.ipv4.neigh.default.gc_thresh3
+Note that although the keyword "default" is in the name, this is a system-wide
+setting; it is not a per-interface value applied to new interfaces, like the
+"default" settings described for rp_filter above. The system includes a garbage
+collector that removes ARP entries from the hash table when it becomes too full.
+The garbage collector is enabled when there are more than gc_thresh2 entries.
+gc_thresh3 is the maximum number of entries in the table; attempts to create
+more will yield ENOBUFS. The garbage collector will not remove permanent
+entries, so it is easily possible to reach the limit (default: 1024) by adding
+lots of static entries (even if they are spread across many namespaces).
+
+Note that increasing the garbage collector thresholds does not actually cause
+the table to be rehashed; the kernel does not have this capability. Instead, ARP
+lookups become O(n) quickly when many entries are added.
+
 
 TRAFFIC CONTROL
 ===============
