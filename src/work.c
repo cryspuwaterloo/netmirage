@@ -30,8 +30,8 @@ static netContext* rootNet;
 static ip4Addr rootIp;
 
 // Converts a node identifier into a namespace name. buffer should be large
-// enough to hold the namespace prefix, the identifier in decimal
-// representation, and the NUL terminator.
+// enough to hold the identifier in decimal representation and the NUL
+// terminator.
 static void idToNsName(nodeId id, char* buffer) {
 	sprintf(buffer, "%u", id);
 }
@@ -42,6 +42,10 @@ static const char* RootName = "root";
 static const char* SelfLinkPrefix = "self";
 static const char* RootLinkPrefix = "root";
 static const char* NodeLinkPrefix = "node";
+
+// Arbitrary values, but chosen to leave the user plenty of space to customize
+static const uint8_t CustomTableId = 120;
+static const uint32_t CustomTablePriority = 9999;
 
 int workInit(const char* nsPrefix, uint64_t softMemCap) {
 	if (!CAP_IS_SUPPORTED(CAP_NET_ADMIN) || !CAP_IS_SUPPORTED(CAP_SYS_ADMIN)) {
@@ -204,6 +208,7 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 
 		int sourceIntfIdx, targetIntfIdx;
 
+		// Self link (used for intra-client communication)
 		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIp, &macs[0], &macs[1], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 		// We don't apply shaping to the self link until we read a reflexive
@@ -364,6 +369,50 @@ int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, cons
 	err = netAddRoute(net1, TableMain, ScopeGlobal, subnet2->addr, subnet2->prefixLen, ip2, intfIdx1, true);
 	if (err != 0) return err;
 	err = netAddRoute(net2, TableMain, ScopeGlobal, subnet1->addr, subnet1->prefixLen, ip1, intfIdx2, true);
+	if (err != 0) return err;
+
+	return 0;
+}
+
+int workAddClientRoutes(nodeId clientId, const ip4Subnet* subnet) {
+	lprintf(LogDebug, "Adding routes to root namespace for client node %u\n", clientId);
+
+	// We have two objectives: packets for the subnet from other clients must be
+	// routed to the root namespace through the "down" link, while packets for
+	// the subnet from within the same client must be routed to the root
+	// namespace through the "self" link. The key difference is that the latter
+	// packets will originate from the "self" interface (and thus we simply need
+	// to reflect them back), whereas packets in the former case will come from
+	// our node-* interfaces.
+
+	// We accomplish these objectives using policy routing. We use a separate
+	// high-priority routing table for packets in the subnet from the "self"
+	// interface.
+
+	char name[MAX_NODE_ID_BUFLEN];
+	idToNsName(clientId, name);
+
+	int err;
+	netContext* net = ncOpenNamespace(nc, clientId, name, false, &err);
+	if (net == NULL) return err;
+
+	int downIdx = netGetInterfaceIndex(net, RootLinkPrefix, &err);
+	if (downIdx == -1) return err;
+	int selfIdx = netGetInterfaceIndex(net, SelfLinkPrefix, &err);
+	if (selfIdx == -1) return err;
+
+	// Default route for packets from other clients
+	err = netAddRoute(net, TableMain, ScopeLink, rootIp, 32, 0, downIdx, true);
+	if (err != 0) return err;
+	err = netAddRoute(net, TableMain, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIp, downIdx, true);
+	if (err != 0) return err;
+
+	// Alternative route for packets from within the same subnet
+	err = netAddRuleForTable(net, subnet, ScopeGlobal, SelfLinkPrefix, CustomTableId, CustomTablePriority, true);
+	if (err != 0) return err;
+	err = netAddRouteToTable(net, CustomTableId, ScopeLink, rootIp, 32, 0, selfIdx, true);
+	if (err != 0) return err;
+	err = netAddRouteToTable(net, CustomTableId, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIp, selfIdx, true);
 	if (err != 0) return err;
 
 	return 0;

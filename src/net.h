@@ -158,3 +158,16 @@ int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr
 // This function is the same as netAddRoute, except it allows the caller to
 // provide an explicit table identifier (e.g., to add routes to custom tables).
 int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);
+
+// Adds a new rule to Linux's policy routing system. The rule matches packets
+// within the given subnet. If inputIntf is not NULL, then the rule matches only
+// packets coming from the named interface. Packets matched by this rule will be
+// routed according to the given routing table. The rule priority specifies the
+// order in which rules are evaluated. There is an unchangeable default rule
+// with priority 0 that causes the local routing table to be scanned first.
+// Returns 0 on success or an error code otherwise.
+int netAddRule(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync);
+
+// This function is the same as netAddRule, except it allows the caller to
+// provide an explicit table identifier.
+int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, uint8_t table, uint32_t priority, bool sync);

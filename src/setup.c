@@ -191,7 +191,7 @@ static bool gmlNameToState(gmlContext* ctx, const char* name, const TopoNode* no
 			lprintf(LogError, "Requested existing state for unknown host '%s'\n", name);
 			return NULL;
 		}
-		bool addrExhausted;
+		bool addrExhausted = false;
 		ip4Addr newAddr;
 		gmlGenerateIp(ctx, &addrExhausted, &newAddr);
 		if (addrExhausted) {
@@ -378,15 +378,18 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	ip4GetSubnet("0.0.0.0/0", &everything);
 	ctx.intfAddrIter = ip4NewIter(&everything, restrictedSubnets);
 
-	bool addrExhausted;
+	int err;
+
+	bool addrExhausted = false;
 	ip4Addr rootAddr;
 	gmlGenerateIp(&ctx, &addrExhausted, &rootAddr);
 	if (addrExhausted) {
 		lprintln(LogError, "The edge node subnets completely fill the unreserved IPv4 space. Some addresses must be left for internal networking interfaces in the emulator.");
+		err = 1;
 		goto cleanup;
 	}
 
-	int err = workAddRoot(rootAddr);
+	err = workAddRoot(rootAddr);
 	if (err != 0) goto cleanup;
 
 	if (globalParams->srcFile) {
@@ -443,6 +446,8 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 			ip4SubnetToString(&node->clientSubnet, subnet);
 			lprintf(LogDebug, "Assigned client node %u to subnet %s\n", id, subnet);
 		}
+		err = workAddClientRoutes((nodeId)id, &node->clientSubnet);
+		if (err != 0) return err;
 	}
 
 	// Build routes between every pair of client nodes

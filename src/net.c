@@ -16,6 +16,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/ethtool.h>
+#include <linux/fib_rules.h>
 #include <linux/if_packet.h>
 #include <linux/limits.h>
 #include <linux/netlink.h>
@@ -725,19 +726,54 @@ int netSetArpTableSize(int thresh1, int thresh2, int thresh3) {
 	return 0;
 }
 
-int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
-	uint8_t tableId;
+static bool getTableId(RoutingTable table, uint8_t* tableId) {
 	switch (table) {
 	case TableMain:
-		tableId = RT_TABLE_MAIN;
+		*tableId = RT_TABLE_MAIN;
 		break;
 	case TableLocal:
-		tableId = RT_TABLE_LOCAL;
+		*tableId = RT_TABLE_LOCAL;
 		break;
 	default:
 		lprintf(LogError, "Unknown routing table constant %d\n", table);
-		return 1;
+		return false;
 	}
+	return true;
+}
+
+static bool getScopeId(RoutingScope scope, unsigned char* scopeId) {
+	switch (scope) {
+	case ScopeLink:
+		*scopeId = RT_SCOPE_LINK;
+		break;
+	case ScopeGlobal:
+		*scopeId = RT_SCOPE_UNIVERSE;
+		break;
+	default:
+		lprintf(LogError, "Unknown routing scope %d\n", scope);
+		return false;
+	}
+	return true;
+}
+
+static bool initRtMsg(struct rtmsg* rtm, unsigned char prefixLen, unsigned char table, RoutingScope scope) {
+	rtm->rtm_family = AF_INET;
+	rtm->rtm_dst_len = prefixLen;
+	rtm->rtm_src_len = 0;
+	rtm->rtm_tos = 0;
+
+	rtm->rtm_table = table;
+	rtm->rtm_protocol = RTPROT_STATIC;
+	rtm->rtm_type = RTN_UNICAST;
+
+	rtm->rtm_flags = 0;
+
+	return getScopeId(scope, &rtm->rtm_scope);
+}
+
+int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
+	uint8_t tableId;
+	if (!getTableId(table, &tableId)) return 1;
 	return netAddRouteToTable(ctx, tableId, scope, dstAddr, subnetBits, gatewayAddr, dstDevIdx, sync);
 }
 
@@ -747,26 +783,11 @@ int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Ad
 		char gatewayIp[IP4_ADDR_BUFLEN];
 		ip4AddrToString(dstAddr, dstIp);
 		ip4AddrToString(gatewayAddr, gatewayIp);
-		lprintf(LogDebug, "Adding route for namespace %p: %s/%u => interface %d via %sgateway %s\n", ctx, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
+		lprintf(LogDebug, "Adding route for namespace %p table %u: %s/%u => interface %d via %sgateway %s\n", ctx, table, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
 	}
 
-	struct rtmsg rtm = { .rtm_src_len = 0, .rtm_tos = 0, .rtm_flags = 0 };
-	rtm.rtm_family = AF_INET;
-	rtm.rtm_dst_len = subnetBits;
-	rtm.rtm_table = table;
-	rtm.rtm_protocol = RTPROT_STATIC;
-	rtm.rtm_type = RTN_UNICAST;
-	switch (scope) {
-	case ScopeLink:
-		rtm.rtm_scope = RT_SCOPE_LINK;
-		break;
-	case ScopeGlobal:
-		rtm.rtm_scope = RT_SCOPE_UNIVERSE;
-		break;
-	default:
-		lprintf(LogError, "Unknown routing scope %d\n", scope);
-		return 1;
-	}
+	struct rtmsg rtm;
+	if (!initRtMsg(&rtm, subnetBits, table, scope)) return 1;
 
 	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
@@ -785,6 +806,44 @@ int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Ad
 
 	nlPushAttr(nl, RTA_OIF);
 		nlBufferAppend(nl, &dstDevIdx, sizeof(dstDevIdx));
+	nlPopAttr(nl);
+
+	return nlSendMessage(nl, sync, NULL, NULL);
+}
+
+int netAddRule(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync) {
+	uint8_t tableId;
+	if (!getTableId(table, &tableId)) return 1;
+	return netAddRuleForTable(ctx, subnet, scope, inputIntf, tableId, priority, sync);
+}
+
+int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, uint8_t table, uint32_t priority, bool sync) {
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char subnetStr[IP4_CIDR_BUFLEN];
+		ip4SubnetToString(subnet, subnetStr);
+		lprintf(LogDebug, "Adding policy routing rule for %p: %s from '%s' => table %u, priority %u\n", ctx, subnetStr, (inputIntf == NULL ? "(any)" : inputIntf), table, priority);
+	}
+
+	struct rtmsg rtm;
+	if (!initRtMsg(&rtm, subnet->prefixLen, table, scope)) return 1;
+
+	nlContext* nl = &ctx->nl;
+	nlInitMessage(nl, RTM_NEWRULE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
+
+	nlBufferAppend(nl, &rtm, sizeof(rtm));
+
+	nlPushAttr(nl, FRA_DST);
+		nlBufferAppend(nl, &subnet->addr, sizeof(subnet->addr));
+	nlPopAttr(nl);
+
+	if (inputIntf != NULL) {
+		nlPushAttr(nl, FRA_IIFNAME);
+			nlBufferAppend(nl, inputIntf, strlen(inputIntf)+1);
+		nlPopAttr(nl);
+	}
+
+	nlPushAttr(nl, FRA_PRIORITY);
+		nlBufferAppend(nl, &priority, sizeof(priority));
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);

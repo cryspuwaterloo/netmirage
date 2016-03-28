@@ -52,6 +52,10 @@ int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targ
 // subnet2 through node 2. The reverse path is also set up.
 int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, const ip4Subnet* subnet1, const ip4Subnet* subnet2);
 
+// Adds static routing paths between a client node and the root. The subnet is
+// the range that the client node is responsible for.
+int workAddClientRoutes(nodeId clientId, const ip4Subnet* subnet);
+
 // Destroys all hosts created with the network prefix. If deletedHosts is not
 // NULL, the number of deleted hosts is stored. If an error was encountered, the
 // value of deletedHosts is undefined.
