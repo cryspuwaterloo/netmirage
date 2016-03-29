@@ -30,6 +30,7 @@
 // TODO: follow POSIX reserved identifier conventions
 // TODO: increase precision of _GNU_SOURCE
 // TODO: minimize includes
+// TODO: more specific error codes than 1
 
 // Argp version and help configuration
 static void argpVersion(FILE* stream, struct argp_state* state) {

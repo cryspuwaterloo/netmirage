@@ -15,6 +15,7 @@
 #include "log.h"
 #include "net.h"
 #include "netcache.h"
+#include "ovs.h"
 #include "topology.h"
 
 // TODO: preliminary implementation of this module is single-threaded
@@ -59,6 +60,14 @@ int workInit(const char* nsPrefix, uint64_t softMemCap) {
 	if (cap_get_flag(caps, CAP_NET_ADMIN, CAP_EFFECTIVE, &capVal) == -1 || capVal != CAP_SET) goto restricted;
 	if (cap_get_flag(caps, CAP_SYS_ADMIN, CAP_EFFECTIVE, &capVal) == -1 || capVal != CAP_SET) goto restricted;
 	cap_free(caps);
+
+	char* ovsVer = ovsVersion();
+	if (ovsVer == NULL) {
+		lprintln(LogError, "Open vSwitch is not installed, is not accessible, or was not recognized. Ensure that Open vSwitch is installed and is accessible using the system PATH.");
+		return 1;
+	}
+	lprintf(LogDebug, "Using Open vSwitch version '%s'\n", ovsVer);
+	free(ovsVer);
 
 	nc = ncNewCache(softMemCap);
 	int err = netInit(nsPrefix);
