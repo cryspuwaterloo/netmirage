@@ -13,14 +13,18 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "ip.h"
 #include "log.h"
 #include "mem.h"
 #include "net.h"
 
 struct ovsContext_s {
 	netContext* net;
-	char* directory;
+	const char* directory;
 	char* dbSocketConnArg;
+	char* actionBuffer; // Flexible buffer
+	size_t actionBufferCap;
+	uint32_t nextPortId;
 };
 
 static int switchContext(ovsContext* ctx) {
@@ -36,11 +40,10 @@ static int switchContext(ovsContext* ctx) {
 // argument is automatically set to be the command. Must call switchContext
 // before this function. If output is non-NULL, output, outputLen, and
 // outputCap are a flexBuffer that will contain the merger of stdout and stderr
-// for the subprocess. Returns 0 on success or an error code otherwise.
-static int ovsCommand(char** output, size_t* outputLen, size_t* outputCap, int expectStatus, ...) {
+// for the subprocess. If dir is not NULL, the process runs in the given working
+// directory. Returns 0 on success or an error code otherwise.
+static int ovsCommandVArg(char** output, size_t* outputLen, size_t* outputCap, const char* dir, va_list args) {
 	char* argv[OVS_CMD_MAX_ARGS+2];
-	va_list args;
-	va_start(args, expectStatus);
 	char* command = va_arg(args, char*); // Safe cast (see POSIX standard)
 
 	lprintHead(LogDebug);
@@ -50,10 +53,10 @@ static int ovsCommand(char** output, size_t* outputLen, size_t* outputCap, int e
 	for (argCount = 1; argCount < OVS_CMD_MAX_ARGS+1; ++argCount) {
 		argv[argCount] = va_arg(args, char*); // Also a safe cast
 		if (argv[argCount] == NULL) break;
-		lprintDirectf(LogDebug, " %s", argv[argCount]);
+		lprintDirectf(LogDebug, " \"%s\"", argv[argCount]);
 	}
-	argv[argCount] = NULL;
 	va_end(args);
+	argv[argCount] = NULL;
 	lprintDirectf(LogDebug, "\n");
 
 	int pipefd[2];
@@ -70,6 +73,11 @@ static int ovsCommand(char** output, size_t* outputLen, size_t* outputCap, int e
 		return errno;
 	}
 	if (pid == 0) { // Child
+		if (dir != NULL) {
+			errno = 0;
+			if (chdir(dir) != 0) exit(errno);
+		}
+
 		close(pipefd[0]);
 		close(STDIN_FILENO);
 		errno = 0;
@@ -78,8 +86,13 @@ static int ovsCommand(char** output, size_t* outputLen, size_t* outputCap, int e
 		if (!dup2(pipefd[1], STDERR_FILENO)) exit(errno);
 		close(pipefd[1]);
 
+		char* envp[] = { NULL, NULL };
+		if (dir != NULL) {
+			newSprintf(&envp[0], "OVS_RUNDIR=%s", dir);
+		}
+
 		errno = 0;
-		execvp(command, (char**)argv);
+		execvpe(command, (char**)argv, envp);
 		exit(errno);
 	}
 	close(pipefd[1]);
@@ -100,9 +113,9 @@ static int ovsCommand(char** output, size_t* outputLen, size_t* outputCap, int e
 
 	int status;
 	waitpid(pid, &status, 0);
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != expectStatus) {
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
 		lprintf(LogError, "Open vSwitch command %s reported a failure. Exit code: %d\n", command, WEXITSTATUS(status));
-		return 1;
+		return WEXITSTATUS(status);
 	} else if (readErr != 0) {
 		lprintf(LogError, "Error while reading output from Open vSwitch command %s: %s\n", command, strerror(readErr));
 		return readErr;
@@ -110,9 +123,21 @@ static int ovsCommand(char** output, size_t* outputLen, size_t* outputCap, int e
 	return 0;
 }
 
+static int ovsCommand(const char* dir, ...) {
+	va_list args;
+	va_start(args, dir);
+	return ovsCommandVArg(NULL, NULL, NULL, dir, args);
+}
+
+static int ovsCommandOutput(char** output, size_t* outputLen, size_t* outputCap, const char* dir, ...) {
+	va_list args;
+	va_start(args, dir);
+	return ovsCommandVArg(output, outputLen, outputCap, dir, args);
+}
+
 static const char* ovsToolVersion(char** output, size_t* outputLen, size_t* outputCap, const char* tool) {
 	*outputLen = 0;
-	int res = ovsCommand(output, outputLen, outputCap, 0, tool, "--version", NULL);
+	int res = ovsCommandOutput(output, outputLen, outputCap, NULL, tool, "--version", NULL);
 	if (res != 0 || *outputLen < 1) return NULL;
 
 	// Take the last token (w.r.t. spaces) on the first line
@@ -166,13 +191,6 @@ ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSche
 		return NULL;
 	}
 
-	errno = 0;
-	if (chdir(directory) != 0) {
-		lprintf(LogError, "Could not chdir to Open vSwitch state directory '%s': %s\n", directory, strerror(errno));
-		*err = errno;
-		return NULL;
-	}
-
 	ovsContext* ctx = NULL;
 
 	netSwitchNamespace(net);
@@ -203,25 +221,28 @@ ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSche
 	}
 
 	if (ovsSchema == NULL) ovsSchema = OVS_DEFAULT_SCHEMA_PATH;
-	*err = ovsCommand(NULL, NULL, NULL, 0, "ovsdb-tool", "create", dbFile, ovsSchema, NULL);
+	*err = ovsCommand(directory, "ovsdb-tool", "create", dbFile, ovsSchema, NULL);
 	if (*err != 0) goto abort;
 
-	*err = ovsCommand(NULL, NULL, NULL, 0, "ovsdb-server", dbFile, "-vconsole:off", "-vsyslog:err", "-vfile:info", "--no-chdir", "--detach", "--monitor", ovsdbLogArg, ovsdbPidArg, ovsdbSocketArg, ovsdbControlArg, NULL);
+	*err = ovsCommand(directory, "ovsdb-server", dbFile, "-vconsole:off", "-vsyslog:err", "-vfile:info", "--no-chdir", "--detach", "--monitor", ovsdbLogArg, ovsdbPidArg, ovsdbSocketArg, ovsdbControlArg, NULL);
 	if (*err != 0) goto abort;
 
-	*err = ovsCommand(NULL, NULL, NULL, 0, "ovs-vsctl", ovsdbSocketConnArg, "--no-wait", "init", NULL);
+	*err = ovsCommand(directory, "ovs-vsctl", ovsdbSocketConnArg, "--no-wait", "init", NULL);
 	if (*err != 0) goto abort;
 
 	// Next, set up the vswitchd daemon. This daemon manages the virtual
 	// switches and their flows.
 
-	*err = ovsCommand(NULL, NULL, NULL, 0, "ovs-vswitchd", &ovsdbSocketConnArg[5], "-vconsole:off", "-vsyslog:err", "-vfile:info", "--mlockall", "--no-chdir", "--detach", "--monitor", ovsLogArg, ovsPidArg, ovsControlArg, NULL);
+	*err = ovsCommand(directory, "ovs-vswitchd", &ovsdbSocketConnArg[5], "-vconsole:off", "-vsyslog:err", "-vfile:info", "--mlockall", "--no-chdir", "--detach", "--monitor", ovsLogArg, ovsPidArg, ovsControlArg, NULL);
 	if (*err != 0) goto abort;
 
 	ctx = emalloc(sizeof(ovsContext));
 	ctx->net = net;
-	ctx->directory = strdup(directory);
+	ctx->directory = directory;
 	ctx->dbSocketConnArg = ovsdbSocketConnArg;
+	flexBufferInit((void**)&ctx->actionBuffer, NULL, &ctx->actionBufferCap);
+	ctx->nextPortId = 1;
+	lprintf(LogDebug, "Created Open vSwitch context %p\n", ctx);
 	goto cleanup;
 abort:
 	// We don't free this unless there was an error (it is used in ctx)
@@ -237,13 +258,14 @@ int ovsFree(ovsContext* ctx) {
 	int err = switchContext(ctx);
 	if (err != 0) return err;
 
+	flexBufferFree((void**)&ctx->actionBuffer, NULL, &ctx->actionBufferCap);
 	free(ctx->dbSocketConnArg);
-	free(ctx->directory);
 	free(ctx);
 	return 0;
 }
 
 int ovsDestroy(const char* directory) {
+	// PATH_MAX is quite large for the stack, so we use the heap
 	char* ovsdbControl;
 	char* ovsControl;
 	newSprintf(&ovsdbControl, "%s/" OVSDB_CTL_FILE, directory);
@@ -252,14 +274,14 @@ int ovsDestroy(const char* directory) {
 	int err = 0;
 	if (access(ovsControl, F_OK) != -1) {
 		lprintf(LogDebug, "Shutting down Open vSwitch instance with control socket '%s'\n", ovsControl);
-		err = ovsCommand(NULL, NULL, NULL, 0, "ovs-appctl", "-t", ovsControl, "exit", NULL);
+		err = ovsCommand(directory, "ovs-appctl", "-t", ovsControl, "exit", NULL);
 		if (err != 0) {
 			lprintf(LogError, "Failed to destroy Open vSwitch instance with control socket '%s'. Shut down the Open vSwitch system manually with ovs-appctl before continuing.\n");
 		}
 	}
 	if (access(ovsdbControl, F_OK) != -1) {
 		lprintf(LogDebug, "Shutting down OVSDB instance with control socket '%s'\n", ovsdbControl);
-		err = ovsCommand(NULL, NULL, NULL, 0, "ovs-appctl", "-t", ovsdbControl, "exit", NULL);
+		err = ovsCommand(directory, "ovs-appctl", "-t", ovsdbControl, "exit", NULL);
 		if (err != 0) {
 			lprintf(LogError, "Failed to destroy OVSDB instance with control socket '%s'. Shut down the Open vSwitch system manually with ovs-appctl before continuing.\n");
 		}
@@ -268,4 +290,95 @@ int ovsDestroy(const char* directory) {
 	free(ovsdbControl);
 	free(ovsControl);
 	return err;
+}
+
+int ovsAddBridge(ovsContext* ctx, const char* name) {
+	int err = switchContext(ctx);
+	if (err != 0) return err;
+
+	lprintf(LogDebug, "Creating Open vSwitch bridge '%s' in context %p\n", name, ctx);
+	err = ovsCommand(ctx->directory, "ovs-vsctl", ctx->dbSocketConnArg, "add-br", name, NULL);
+	return err;
+}
+
+int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName, uint32_t* portId) {
+	int err = switchContext(ctx);
+	if (err != 0) return err;
+
+	lprintf(LogDebug, "Adding interface '%s' to Open vSwitch bridge '%s' with port index %u in context %p\n", intfName, bridge, ctx->nextPortId, ctx);
+	err = ovsCommand(ctx->directory, "ovs-vsctl", ctx->dbSocketConnArg, "add-port", bridge, intfName, NULL);
+	if (err != 0) return err;
+
+	if (portId != NULL) *portId = ctx->nextPortId;
+	++ctx->nextPortId;
+	return 0;
+}
+
+int ovsArpOnly(ovsContext* ctx, const char* bridge, uint32_t priority) {
+	int err = switchContext(ctx);
+	if (err != 0) return err;
+
+	lprintf(LogDebug, "Removing all OpenFlow rules from bridge '%s' in context %p except for ARP switching\n", bridge, ctx);
+
+	err = ovsCommand(ctx->directory, "ovs-ofctl", "del-flows", bridge, NULL);
+	if (err != 0) return err;
+
+	char actions[256];
+	snprintf(actions, 256, "arp, priority=%u, actions=NORMAL", priority);
+
+	err = ovsCommand(ctx->directory, "ovs-ofctl", "add-flow", bridge, actions, NULL);
+	return err;
+}
+
+int ovsAddIpFlow(ovsContext* ctx, const char* bridge, uint32_t inPort, const ip4Subnet* srcNet, const ip4Subnet* dstNet, const macAddr* newSrcMac, const macAddr* newDstMac, uint32_t outPort, uint32_t priority) {
+	int err = switchContext(ctx);
+	if (err != 0) return err;
+
+	char subnetStr[IP4_CIDR_BUFLEN];
+	char macStr[MAC_ADDR_BUFLEN];
+
+	lprintHead(LogDebug);
+	lprintDirectf(LogDebug, "Adding OpenFlow rule to bridge '%s' in context %p: priority %u, match (", bridge, ctx, priority);
+
+	size_t actionLen = 0;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "ip, priority=%u", priority);
+	--actionLen; // Remove NUL terminator to concatenate
+
+	if (inPort > 0) {
+		lprintDirectf(LogDebug, "in port = %u", inPort);
+		flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", in_port=%u", inPort);
+		--actionLen;
+	}
+	if (srcNet != NULL) {
+		ip4SubnetToString(srcNet, subnetStr);
+		lprintDirectf(LogDebug, ", source = %s", subnetStr);
+		flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", nw_src=%s", subnetStr);
+		--actionLen;
+	}
+	if (dstNet != NULL) {
+		ip4SubnetToString(dstNet, subnetStr);
+		lprintDirectf(LogDebug, ", destination = %s", subnetStr);
+		flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", nw_dst=%s", subnetStr);
+		--actionLen;
+	}
+	lprintDirectf(LogDebug, "), perform (out port = %u", outPort);
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", actions=");
+	--actionLen;
+	if (newSrcMac != NULL) {
+		macAddrToString(newSrcMac, macStr);
+		lprintDirectf(LogDebug, "source MAC = %s", macStr);
+		flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", mod_dl_src=%s", macStr);
+		--actionLen;
+	}
+	if (newDstMac != NULL) {
+		macAddrToString(newDstMac, macStr);
+		lprintDirectf(LogDebug, "destination MAC = %s", macStr);
+		flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", mod_dl_dst=%s", macStr);
+		--actionLen;
+	}
+	lprintDirectf(LogDebug, ") priority %u\n", priority);
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", output:%u", outPort);
+
+	return ovsCommand(ctx->directory, "ovs-ofctl", "add-flow", bridge, ctx->actionBuffer, NULL);
 }

@@ -24,7 +24,7 @@ static const setupParams* globalParams;
 
 int setupInit(const setupParams* params) {
 	globalParams = params;
-	int res = workInit(params->nsPrefix, params->softMemCap);
+	int res = workInit(params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap);
 	if (res != 0) return res;
 
 	if (params->edgeNodeCount < 1) {
@@ -49,7 +49,7 @@ int setupInit(const setupParams* params) {
 			strcpy(edge->intf, params->edgeNodeDefaults.intf);
 		}
 		if (!edge->macSpecified) {
-			res = workGetEdgeMac(edge->intf, edge->ip, &edge->mac);
+			res = workGetEdgeRemoteMac(edge->intf, edge->ip, &edge->mac);
 			if (res != 0) {
 				char ip[IP4_ADDR_BUFLEN];
 				ip4AddrToString(edge->ip, ip);
@@ -139,6 +139,7 @@ typedef struct {
 	ip4Addr addr; // Duplicated for all interfaces
 	bool isClient;
 	ip4Subnet clientSubnet;
+	macAddr clientMacs[NEEDED_MACS_CLIENT];
 } gmlNodeState;
 
 typedef struct {
@@ -154,9 +155,8 @@ typedef struct {
 	GHashTable* gmlToState; // Maps GraphML names to indices in nodeStates
 
 	double clientsPerEdge;
-	edgeNodeParams* currentEdge;
+	nodeId currentEdgeIdx;
 	nodeId currentEdgeClients;
-	nodeId filledEdges;
 	ip4FragIter* clientIter;
 
 	ip4Iter* intfAddrIter;
@@ -224,9 +224,8 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 	gmlNodeState* state;
 	if (!gmlNameToState(ctx, node->name, &node->t, &id, &state)) return 1;
 
-	macAddr macs[NeededMacsClient];
 	if (node->t.client) {
-		if (!macNextAddrs(&ctx->macAddrIter, macs, NeededMacsClient)) {
+		if (!macNextAddrs(&ctx->macAddrIter, state->clientMacs, NEEDED_MACS_CLIENT)) {
 			lprintln(LogError, "Ran out of MAC addresses when creating a new client node.");
 			return 1;
 		}
@@ -239,7 +238,7 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, id, ip);
 	}
 
-	return workAddHost(id, state->addr, macs, &node->t);
+	return workAddHost(id, state->addr, state->clientMacs, &node->t);
 }
 
 static int gmlAddLink(const GmlLink* link, void* userData) {
@@ -276,8 +275,8 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			res = workSetSelfLink(sourceId, &link->t);
 		}
 	} else {
-		macAddr macs[NeededMacsLink];
-		if (!macNextAddrs(&ctx->macAddrIter, macs, NeededMacsLink)) {
+		macAddr macs[NEEDED_MACS_LINK];
+		if (!macNextAddrs(&ctx->macAddrIter, macs, NEEDED_MACS_LINK)) {
 			lprintln(LogError, "Ran out of MAC addresses when adding a new virtual ethernet connection.");
 			return 1;
 		}
@@ -296,34 +295,33 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 }
 
 static bool gmlNextEdge(gmlContext* ctx) {
-	if (ctx->currentEdge == NULL) {
-		ctx->currentEdge = globalParams->edgeNodes;
-		ctx->filledEdges = 0;
+	if (ctx->clientIter == NULL) {
+		ctx->currentEdgeIdx = 0;
 	} else {
-		++ctx->filledEdges;
-		if (ctx->filledEdges >= globalParams->edgeNodeCount) {
-			ctx->currentEdge = NULL;
+		++ctx->currentEdgeIdx;
+		ip4FreeFragIter(ctx->clientIter);
+		if (ctx->currentEdgeIdx >= globalParams->edgeNodeCount) {
+			ctx->clientIter = NULL;
 			return false;
 		}
-		++ctx->currentEdge;
-		ip4FreeFragIter(ctx->clientIter);
 	}
 	ctx->currentEdgeClients = 0;
 
 	// This approach avoids numerical robustness problems
-	double prevMarker = round(ctx->clientsPerEdge * ctx->filledEdges);
-	double nextMarker = round(ctx->clientsPerEdge * (ctx->filledEdges+1));
+	double prevMarker = round(ctx->clientsPerEdge * ctx->currentEdgeIdx);
+	double nextMarker = round(ctx->clientsPerEdge * (ctx->currentEdgeIdx+1));
 	fesetround(FE_TONEAREST);
 	nodeId currentEdgeCapacity = (nodeId)llrint(nextMarker - prevMarker);
 
-	ctx->clientIter = ip4FragmentSubnet(&ctx->currentEdge->vsubnet, currentEdgeCapacity);
+	edgeNodeParams* edge = &globalParams->edgeNodes[ctx->currentEdgeIdx];
+	ctx->clientIter = ip4FragmentSubnet(&edge->vsubnet, currentEdgeCapacity);
 	if (!ip4FragIterNext(ctx->clientIter)) return false;
 
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char edgeIp[IP4_ADDR_BUFLEN];
 		char edgeSubnet[IP4_CIDR_BUFLEN];
-		ip4AddrToString(ctx->currentEdge->ip, edgeIp);
-		ip4SubnetToString(&ctx->currentEdge->vsubnet, edgeSubnet);
+		ip4AddrToString(edge->ip, edgeIp);
+		ip4SubnetToString(&edge->vsubnet, edgeSubnet);
 		lprintf(LogDebug, "Now allocating %u client subnets for edge %s (range %s)\n", currentEdgeCapacity, edgeIp, edgeSubnet);
 	}
 	return true;
@@ -379,6 +377,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	ctx.intfAddrIter = ip4NewIter(&everything, restrictedSubnets);
 
 	int err;
+	uint32_t* edgePorts = eamalloc(globalParams->edgeNodeCount, sizeof(uint32_t), 0);
 
 	bool addrExhausted = false;
 	ip4Addr rootAddr;
@@ -391,6 +390,34 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 
 	err = workAddRoot(rootAddr);
 	if (err != 0) goto cleanup;
+
+	// Move all interfaces associated with edge nodes into the root namespace
+	for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
+		edgeNodeParams* edge = &globalParams->edgeNodes[i];
+
+		// Check to see if this is a duplicate. We simply perform linear
+		// searches because the number of edge nodes should be relatively small
+		// (typically less than 10).
+		bool duplicate = false;
+		for (size_t j = 0; j < i; ++j) {
+			edgeNodeParams* otherEdge = &globalParams->edgeNodes[j];
+			if (strcmp(edge->intf, otherEdge->intf) == 0) {
+				edgePorts[i] = edgePorts[j];
+				duplicate = true;
+				break;
+			}
+		}
+		if (duplicate) continue;
+
+		err = workAddEdgeInterface(edge->intf, &edgePorts[i]);
+		if (err != 0) goto cleanup;
+
+		macAddr edgeLocalMac;
+		err = workGetEdgeLocalMac(edge->intf, &edgeLocalMac);
+		if (err != 0) goto cleanup;
+		err = workAddEdgeRoutes(&edge->vsubnet, edgePorts[i], &edgeLocalMac, &edge->mac);
+		if (err != 0) goto cleanup;
+	}
 
 	if (globalParams->srcFile) {
 		int passes = gmlParams->twoPass ? 2 : 1;
@@ -441,13 +468,14 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 			lprintln(LogError, "BUG: exhausted client node subnet space");
 			goto cleanup;
 		}
+		size_t edgeIdx = ctx.currentEdgeIdx;
 		if (PASSES_LOG_THRESHOLD(LogDebug)) {
 			char subnet[IP4_CIDR_BUFLEN];
 			ip4SubnetToString(&node->clientSubnet, subnet);
-			lprintf(LogDebug, "Assigned client node %u to subnet %s\n", id, subnet);
+			lprintf(LogDebug, "Assigned client node %u to subnet %s owned by edge %lu\n", id, subnet, edgeIdx);
 		}
-		err = workAddClientRoutes((nodeId)id, &node->clientSubnet);
-		if (err != 0) return err;
+		err = workAddClientRoutes((nodeId)id, node->clientMacs, &node->clientSubnet, edgePorts[edgeIdx]);
+		if (err != 0) goto cleanup;
 	}
 
 	// Build routes between every pair of client nodes
@@ -494,5 +522,6 @@ cleanup:
 	g_hash_table_destroy(ctx.gmlToState);
 	ip4FreeIter(ctx.intfAddrIter);
 	flexBufferFree((void**)&ctx.nodeStates, &ctx.nodeCount, &ctx.nodeCap);
+	free(edgePorts);
 	return err;
 }

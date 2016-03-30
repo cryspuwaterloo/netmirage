@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -92,4 +93,35 @@ void flexBufferAppend(void* buffer, size_t* len, const void* data, size_t dataLe
 	}
 
 	memcpy(&((char*)buffer)[startByte], data, copyLen);
+}
+
+void flexBufferGrowAppendStr(void** buffer, size_t* len, size_t* cap, const char* str) {
+	size_t dataLen = strlen(str)+1;
+	flexBufferGrow(buffer, len != NULL ? *len : 0, cap, dataLen, 1);
+	flexBufferAppend(*buffer, len, str, dataLen, 1);
+}
+
+static size_t tryFlexBufferPrintf(void* buffer, size_t* len, size_t cap, const char* fmt, va_list args) {
+	size_t currentLen = (len != NULL ? *len : 0);
+	char* start = &((char*)buffer)[currentLen];
+	size_t freeSpace = cap - currentLen;
+	int neededChars = vsnprintf(start, freeSpace, fmt, args);
+	if (neededChars < 0) return 0; // Silently ignore errors
+	if ((size_t)neededChars < freeSpace) {
+		if (len != NULL) *len += (size_t)neededChars+1;
+		return 0;
+	}
+	return (size_t)(neededChars+1);
+}
+
+void flexBufferPrintf(void** buffer, size_t* len, size_t* cap, const char* fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	size_t additionalSpace = tryFlexBufferPrintf(*buffer, len, *cap, fmt, args);
+	if (additionalSpace > 0) {
+		flexBufferGrow(buffer, len != NULL ? *len : 0, cap, additionalSpace, 1);
+		va_start(args, fmt);
+		tryFlexBufferPrintf(*buffer, len, *cap, fmt, args);
+	}
+	va_end(args);
 }

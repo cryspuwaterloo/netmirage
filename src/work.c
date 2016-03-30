@@ -20,8 +20,8 @@
 
 // TODO: preliminary implementation of this module is single-threaded
 
-const size_t NeededMacsClient = 4;
-const size_t NeededMacsLink = 2;
+static const char* ovsDir;
+static const char* ovsSchema;
 
 static netCache* nc;
 
@@ -29,6 +29,8 @@ static netCache* nc;
 static netContext* defaultNet;
 static netContext* rootNet;
 static ip4Addr rootIp;
+
+static ovsContext* rootSwitch;
 
 // Converts a node identifier into a namespace name. buffer should be large
 // enough to hold the identifier in decimal representation and the NUL
@@ -44,11 +46,22 @@ static const char* SelfLinkPrefix = "self";
 static const char* RootLinkPrefix = "root";
 static const char* NodeLinkPrefix = "node";
 
+static const char* RootBridgeName = "sneac-br0";
+
 // Arbitrary values, but chosen to leave the user plenty of space to customize
 static const uint8_t CustomTableId = 120;
 static const uint32_t CustomTablePriority = 9999;
+static const uint32_t OvsPriorityArp = (1 << 15) - 100;
+static const uint32_t OvsPrioritySelf = 1 << 14;
+static const uint32_t OvsPriorityIn = 1 << 13;
+static const uint32_t OvsPriorityOut = 1 << 7;
 
-int workInit(const char* nsPrefix, uint64_t softMemCap) {
+#define MAC_CLIENT_SELF  0
+#define MAC_ROOT_SELF    1
+#define MAC_CLIENT_OTHER 2
+#define MAC_ROOT_OTHER   3
+
+int workInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchemaArg, uint64_t softMemCap) {
 	if (!CAP_IS_SUPPORTED(CAP_NET_ADMIN) || !CAP_IS_SUPPORTED(CAP_SYS_ADMIN)) {
 		lprintf(LogError, "The system does not support the required capabilities.");
 		return 1;
@@ -68,6 +81,9 @@ int workInit(const char* nsPrefix, uint64_t softMemCap) {
 	}
 	lprintf(LogDebug, "Using Open vSwitch version '%s'\n", ovsVer);
 	free(ovsVer);
+
+	ovsDir = ovsDirArg;
+	ovsSchema = ovsSchemaArg;
 
 	nc = ncNewCache(softMemCap);
 	int err = netInit(nsPrefix);
@@ -89,14 +105,14 @@ int workCleanup(void) {
 	return 0;
 }
 
-int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result) {
+int workGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMac) {
 	int res = netSwitchNamespace(defaultNet);
 	if (res != 0) return res;
 
 	char ipStr[IP4_ADDR_BUFLEN];
 	ipStr[0] = '\0';
 	for (int attempt = 0; attempt < 5; ++attempt) {
-		res = netGetRemoteMacAddr(defaultNet, intfName, ip, result);
+		res = netGetRemoteMacAddr(defaultNet, intfName, ip, edgeRemoteMac);
 		if (res == 0) return 0;
 		if (res != EAGAIN) return res;
 
@@ -128,6 +144,10 @@ int workGetEdgeMac(const char* intfName, ip4Addr ip, macAddr* result) {
 		}
 	}
 	return 1;
+}
+
+int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac) {
+	return netGetLocalMacAddr(rootNet, intfName, edgeLocalMac);
 }
 
 static int applyNamespaceParams(void) {
@@ -193,7 +213,43 @@ int workAddRoot(ip4Addr addr) {
 
 	rootIp = addr;
 
+	rootSwitch = NULL;
+	rootSwitch = ovsStart(rootNet, ovsDir, ovsSchema, &err);
+	if (rootSwitch == NULL) return err;
+
+	err = ovsAddBridge(rootSwitch, RootBridgeName);
+	if (err != 0) return err;
+
+	// Reject everything initially, but switch ARP normally
+	err = ovsArpOnly(rootSwitch, RootBridgeName, OvsPriorityArp);
+	if (err != 0) return err;
+
 	return 0;
+}
+
+int workAddEdgeInterface(const char* intfName, uint32_t* portId) {
+	lprintf(LogDebug, "Adding external interface '%s' to the switch in the root namespace\n", intfName);
+
+	int err;
+
+	int intfIdx = netGetInterfaceIndex(defaultNet, intfName, &err);
+	if (intfIdx == -1) return err;
+
+	err = netMoveInterface(defaultNet, intfIdx, rootNet, true);
+	if (err != 0) return err;
+
+	err = ovsAddPort(rootSwitch, RootBridgeName, intfName, portId);
+	if (err != 0) return err;
+
+	return 0;
+}
+
+static void sprintRootSelfIntf(char* buf, nodeId id) {
+	sprintf(buf, "%s-%u", SelfLinkPrefix, id);
+}
+
+static void sprintRootUpIntf(char* buf, nodeId id) {
+	sprintf(buf, "%s-%u", NodeLinkPrefix, id);
 }
 
 int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
@@ -213,22 +269,22 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 		lprintf(LogDebug, "Connecting host %s to root for edge node connectivity\n", nodeName);
 
 		char intfBuf[InterfaceBufLen];
-		sprintf(intfBuf, "%s-%u", SelfLinkPrefix, id);
+		sprintRootSelfIntf(intfBuf, id);
 
 		int sourceIntfIdx, targetIntfIdx;
 
 		// Self link (used for intra-client communication)
-		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIp, &macs[0], &macs[1], &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIp, &macs[MAC_CLIENT_SELF], &macs[MAC_ROOT_SELF], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 		// We don't apply shaping to the self link until we read a reflexive
 		// edge from the input file (handled in workAddLink). However, we add
 		// the link immediately so that traffic can flow between clients in the
 		// same edge node even if no reflexive edge is present in the topology.
 
-		sprintf(intfBuf, "%s-%u", NodeLinkPrefix, id);
+		sprintRootUpIntf(intfBuf, id);
 
 		// Up / down link (used for inter-client communication)
-		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIp, &macs[2], &macs[3], &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIp, &macs[MAC_CLIENT_OTHER], &macs[MAC_ROOT_OTHER], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 
 		err = netSetEgressShaping(net, sourceIntfIdx, 0, 0, node->packetLoss, node->bandwidthDown, 0, true);
@@ -383,7 +439,7 @@ int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, cons
 	return 0;
 }
 
-int workAddClientRoutes(nodeId clientId, const ip4Subnet* subnet) {
+int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort) {
 	lprintf(LogDebug, "Adding routes to root namespace for client node %u\n", clientId);
 
 	// We have two objectives: packets for the subnet from other clients must be
@@ -424,7 +480,40 @@ int workAddClientRoutes(nodeId clientId, const ip4Subnet* subnet) {
 	err = netAddRouteToTable(net, CustomTableId, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIp, selfIdx, true);
 	if (err != 0) return err;
 
+	// At this point, the client namespace is fully set up. Now we add flow
+	// rules to the root switch
+
+	char intfBuf[InterfaceBufLen];
+	uint32_t portId;
+
+	// Incoming "self" link for intra-client communication
+	sprintRootSelfIntf(intfBuf, clientId);
+	err = ovsAddPort(rootSwitch, RootBridgeName, intfBuf, &portId);
+	if (err != 0) return err;
+	err = ovsAddIpFlow(rootSwitch, RootBridgeName, edgePort, subnet, subnet, &clientMacs[MAC_ROOT_SELF], &clientMacs[MAC_CLIENT_SELF], portId, OvsPrioritySelf);
+	if (err != 0) return err;
+
+	// Incoming uplink for inter-client communication
+	sprintRootUpIntf(intfBuf, clientId);
+	err = ovsAddPort(rootSwitch, RootBridgeName, intfBuf, &portId);
+	if (err != 0) return err;
+	err = ovsAddIpFlow(rootSwitch, RootBridgeName, edgePort, subnet, NULL, &clientMacs[MAC_ROOT_OTHER], &clientMacs[MAC_CLIENT_OTHER], portId, OvsPriorityIn);
+	if (err != 0) return err;
+
 	return 0;
+}
+
+int workAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const macAddr* edgeLocalMac, const macAddr* edgeRemoteMac) {
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char macStr[MAC_ADDR_BUFLEN];
+		char subnetStr[IP4_CIDR_BUFLEN];
+		macAddrToString(edgeRemoteMac, macStr);
+		ip4SubnetToString(edgeSubnet, subnetStr);
+		lprintf(LogDebug, "Adding egression route to root namespace for edge node with MAC %s responsible for subnet %s\n", macStr, subnetStr);
+	}
+
+	// Outgoing downlink and "self" link
+	return ovsAddIpFlow(rootSwitch, RootBridgeName, 0, NULL, edgeSubnet, edgeLocalMac, edgeRemoteMac, edgePort, OvsPriorityOut);
 }
 
 int workJoin(void) {
@@ -438,6 +527,7 @@ static int workDestroyNamespace(const char* name, void* userData) {
 }
 
 int workDestroyHosts(uint32_t* deletedHosts) {
+	ovsDestroy(ovsDir);
 	if (deletedHosts != NULL) *deletedHosts = 0;
 	return netEnumNamespaces(&workDestroyNamespace, deletedHosts);
 }

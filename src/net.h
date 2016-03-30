@@ -75,6 +75,10 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 // err (if provided) to the error code.
 int netGetInterfaceIndex(netContext* ctx, const char* name, int* err);
 
+// Moves an interface from one namespace to another. Returns 0 on success or an
+// error code otherwise.
+int netMoveInterface(netContext* srcCtx, int devIdx, netContext* dstCtx, bool sync);
+
 // Adds an IPv4 address to an interface. subnetBits specifies the prefix length
 // of the subnet. Returns 0 on success or an error code otherwise.
 int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t subnetBits, ip4Addr broadcastAddr, ip4Addr anycastAddr, bool sync);
@@ -109,6 +113,10 @@ int netAddStaticArp(netContext* ctx, const char* intfName, ip4Addr ip, const mac
 // Returns 0 on success or an error code otherwise. If EAGAIN is returned, then
 // the entry was not found in the cache.
 int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result);
+
+// Retrieves the MAC address associated with a local interface. Returns 0 on
+// success or an error code otherwise.
+int netGetLocalMacAddr(netContext* ctx, const char* name, macAddr* result);
 
 // Enables or disables packet routing between interfaces in the active
 // namespace. Returns 0 on success or an error code otherwise.

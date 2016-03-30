@@ -31,6 +31,8 @@
 // TODO: increase precision of _GNU_SOURCE
 // TODO: minimize includes
 // TODO: more specific error codes than 1
+// TODO: normalize (return result, out err) vs (return err, out result)
+// TODO: normalize res and err
 
 // Argp version and help configuration
 static void argpVersion(FILE* stream, struct argp_state* state) {
@@ -124,6 +126,8 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 	switch (key) {
 	case 'd': args.cleanup = true; break;
 	case 'f': args.params.srcFile = arg; break;
+	case 'r': args.params.ovsDir = arg; break;
+	case 'a': args.params.ovsSchema = arg; break;
 	case 's': break; // Already parsed in our first pass
 
 	case 'i': {
@@ -319,6 +323,8 @@ cleanup:
 	return res;
 }
 
+#define DEFAULT_OVS_DIR    "/tmp/sneac"
+
 int main(int argc, char** argv) {
 	#ifdef DEBUG
 		mtrace();
@@ -341,6 +347,8 @@ int main(int argc, char** argv) {
 			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 2 },
 
 			{ "netns-prefix", 'p', "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"sneac-\").", 3 },
+			{ "ovs-dir",      'r', "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 3 },
+			{ "ovs-schema",   'a', "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 3 },
 
 			{ "mem",          'm', "MiB",    0, "Approximate maximum memory use, specified in MiB. The program may use more than this amount if needed.", 4 },
 
@@ -371,6 +379,7 @@ int main(int argc, char** argv) {
 	args.cleanup = false;
 	args.verbosity = LogWarning;
 	args.params.nsPrefix = "sneac-";
+	args.params.ovsDir = DEFAULT_OVS_DIR;
 	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
 	ip4GetSubnet(DEFAULT_CLIENTS_SUBNET, &args.params.edgeNodeDefaults.globalVSubnet);
 	args.gmlParams.bandwidthDivisor = ShadowDivisor;

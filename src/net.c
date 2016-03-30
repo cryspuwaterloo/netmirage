@@ -344,6 +344,23 @@ int netSwitchNamespace(netContext* ctx) {
 	return 0;
 }
 
+int netMoveInterface(netContext* srcCtx, int devIdx, netContext* dstCtx, bool sync) {
+	lprintf(LogDebug, "Moving interface %p:%d to context %p\n", srcCtx, devIdx, dstCtx);
+
+	nlContext* nl = &srcCtx->nl;
+	nlInitMessage(nl, RTM_NEWLINK, (sync ? NLM_F_ACK : 0));
+
+	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_type = 0, .ifi_flags = 0, .ifi_change = UINT_MAX };
+	ifi.ifi_index = devIdx;
+	nlBufferAppend(nl, &ifi, sizeof(ifi));
+
+	nlPushAttr(nl, IFLA_NET_NS_FD);
+		nlBufferAppend(nl, &dstCtx->fd, sizeof(dstCtx->fd));
+	nlPopAttr(nl);
+
+	return nlSendMessage(nl, sync, NULL, NULL);
+}
+
 int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		lprintHead(LogDebug);
@@ -366,7 +383,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 
 	nlInitMessage(nl, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
 
-	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_change = UINT_MAX, .ifi_type = 0, .ifi_index = 0, .ifi_flags = 0 };
+	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_type = 0, .ifi_index = 0, .ifi_flags = 0, .ifi_change = UINT_MAX };
 	nlBufferAppend(nl, &ifi, sizeof(ifi));
 
 	nlPushAttr(nl, IFLA_IFNAME);
@@ -651,6 +668,26 @@ int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAd
 		if (result->octets[i] != 0) return 0;
 	}
 	return EAGAIN;
+}
+
+int netGetLocalMacAddr(netContext* ctx, const char* name, macAddr* result) {
+	struct ifreq ifr;
+	initIfReq(&ifr);
+	int res = sendIoCtlIfReq(ctx, name, SIOCGIFHWADDR, NULL, &ifr);
+	if (res != 0) return res;
+
+	if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
+		lprintf(LogError, "Hardware address for interface %p:'%s' has an unsupported family %u\n", ifr.ifr_hwaddr.sa_family);
+		return EAFNOSUPPORT;
+	}
+	memcpy(result->octets, ifr.ifr_hwaddr.sa_data, MAC_ADDR_BYTES);
+
+	if (PASSES_LOG_THRESHOLD(LogDebug)) {
+		char macStr[MAC_ADDR_BUFLEN];
+		macAddrToString(result, macStr);
+		lprintf(LogDebug, "Interface %p:'%s' has MAC address %s\n", ctx, name, macStr);
+	}
+	return 0;
 }
 
 static int readSysctlFmt(const char* filePath, const char* fmt, void* value) {

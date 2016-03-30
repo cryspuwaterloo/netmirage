@@ -55,3 +55,9 @@ void flexBufferGrow(void** buffer, size_t len, size_t* cap, size_t additionalSpa
 // enough to hold the new data. The size of the data to append is
 // (dataLen * eltsize) bytes.
 void flexBufferAppend(void* buffer, size_t* len, const void* data, size_t dataLen, size_t eltsize);
+
+// Convenience function that grows a buffer and appends a string to it.
+void flexBufferGrowAppendStr(void** buffer, size_t* len, size_t* cap, const char* str);
+
+// Convenience function that grows a buffer and appends a formatted string.
+void flexBufferPrintf(void** buffer, size_t* len, size_t* cap, const char* fmt, ...);

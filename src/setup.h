@@ -23,7 +23,9 @@ typedef struct {
 } edgeNodeParams;
 
 typedef struct {
-	const char* nsPrefix; // Prefix for network namespaces
+	const char* nsPrefix;  // Prefix for network namespaces
+	const char* ovsDir;    // Directory for Open vSwitch files
+	const char* ovsSchema; // Path to Open vSwitch's OVSDB schema
 
 	// srcFile is the path to a file containing the network topology in the
 	// appropriate format. If it is NULL, then stdin is used instead.
