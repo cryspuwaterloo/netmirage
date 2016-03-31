@@ -28,7 +28,11 @@ static netCache* nc;
 // We keep these outside of the cache because they are used frequently:
 static netContext* defaultNet;
 static netContext* rootNet;
-static ip4Addr rootIp;
+
+// We need to have two IP addresses for the root due to policy routing problems
+// in kernel 3 (see workAddClientRoutes for details)
+static ip4Addr rootIpSelf;
+static ip4Addr rootIpOther;
 
 static ovsContext* rootSwitch;
 
@@ -201,7 +205,7 @@ static int buildVethPair(netContext* sourceNet, netContext* targetNet,
 	return 0;
 }
 
-int workAddRoot(ip4Addr addr) {
+int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther) {
 	lprintf(LogDebug, "Creating a private 'root' namespace\n");
 
 	int err;
@@ -211,7 +215,8 @@ int workAddRoot(ip4Addr addr) {
 	err = applyNamespaceParams();
 	if (err != 0) return err;
 
-	rootIp = addr;
+	rootIpSelf = addrSelf;
+	rootIpOther = addrOther;
 
 	rootSwitch = NULL;
 	rootSwitch = ovsStart(rootNet, ovsDir, ovsSchema, &err);
@@ -274,7 +279,7 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 		int sourceIntfIdx, targetIntfIdx;
 
 		// Self link (used for intra-client communication)
-		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIp, &macs[MAC_CLIENT_SELF], &macs[MAC_ROOT_SELF], &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIpSelf, &macs[MAC_CLIENT_SELF], &macs[MAC_ROOT_SELF], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 		// We don't apply shaping to the self link until we read a reflexive
 		// edge from the input file (handled in workAddLink). However, we add
@@ -284,7 +289,7 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 		sprintRootUpIntf(intfBuf, id);
 
 		// Up / down link (used for inter-client communication)
-		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIp, &macs[MAC_CLIENT_OTHER], &macs[MAC_ROOT_OTHER], &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIpOther, &macs[MAC_CLIENT_OTHER], &macs[MAC_ROOT_OTHER], &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 
 		err = netSetEgressShaping(net, sourceIntfIdx, 0, 0, node->packetLoss, node->bandwidthDown, 0, true);
@@ -467,17 +472,23 @@ int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* 
 	if (selfIdx == -1) return err;
 
 	// Default route for packets from other clients
-	err = netAddRoute(net, TableMain, ScopeLink, rootIp, 32, 0, downIdx, true);
+	err = netAddRoute(net, TableMain, ScopeLink, rootIpOther, 32, 0, downIdx, true);
 	if (err != 0) return err;
-	err = netAddRoute(net, TableMain, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIp, downIdx, true);
+	err = netAddRoute(net, TableMain, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIpOther, downIdx, true);
 	if (err != 0) return err;
 
 	// Alternative route for packets from within the same subnet
-	err = netAddRuleForTable(net, subnet, ScopeGlobal, SelfLinkPrefix, CustomTableId, CustomTablePriority, true);
+	err = netAddRuleForTable(net, subnet, SelfLinkPrefix, CustomTableId, CustomTablePriority, true);
 	if (err != 0) return err;
-	err = netAddRouteToTable(net, CustomTableId, ScopeLink, rootIp, 32, 0, selfIdx, true);
+	// In kernel 4, we would assign the root only one IP address. We would set
+	// the link route to be through the self interface in the custom table, and
+	// the up/down interface in the main table. However, kernel 3 will not parse
+	// this link route and will lead to an "network unreachable" error when
+	// adding the subnet route to the custom table. The workaround is to use two
+	// addresses and to place both link routes in the main table.
+	err = netAddRoute(net, TableMain, ScopeLink, rootIpSelf, 32, 0, selfIdx, true);
 	if (err != 0) return err;
-	err = netAddRouteToTable(net, CustomTableId, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIp, selfIdx, true);
+	err = netAddRouteToTable(net, CustomTableId, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIpSelf, selfIdx, true);
 	if (err != 0) return err;
 
 	// At this point, the client namespace is fully set up. Now we add flow

@@ -174,8 +174,8 @@ int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Ad
 // order in which rules are evaluated. There is an unchangeable default rule
 // with priority 0 that causes the local routing table to be scanned first.
 // Returns 0 on success or an error code otherwise.
-int netAddRule(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync);
+int netAddRule(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync);
 
 // This function is the same as netAddRule, except it allows the caller to
 // provide an explicit table identifier.
-int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, uint8_t table, uint32_t priority, bool sync);
+int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, uint8_t table, uint32_t priority, bool sync);

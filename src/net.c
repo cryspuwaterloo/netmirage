@@ -848,13 +848,13 @@ int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Ad
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
-int netAddRule(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync) {
+int netAddRule(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync) {
 	uint8_t tableId;
 	if (!getTableId(table, &tableId)) return 1;
-	return netAddRuleForTable(ctx, subnet, scope, inputIntf, tableId, priority, sync);
+	return netAddRuleForTable(ctx, subnet, inputIntf, tableId, priority, sync);
 }
 
-int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, RoutingScope scope, const char* inputIntf, uint8_t table, uint32_t priority, bool sync) {
+int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, uint8_t table, uint32_t priority, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char subnetStr[IP4_CIDR_BUFLEN];
 		ip4SubnetToString(subnet, subnetStr);
@@ -862,7 +862,7 @@ int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, RoutingScope sc
 	}
 
 	struct rtmsg rtm;
-	if (!initRtMsg(&rtm, subnet->prefixLen, table, scope)) return 1;
+	if (!initRtMsg(&rtm, subnet->prefixLen, table, ScopeGlobal)) return 1;
 
 	nlContext* nl = &ctx->nl;
 	nlInitMessage(nl, RTM_NEWRULE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));

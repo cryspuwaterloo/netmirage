@@ -379,16 +379,18 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	int err;
 	uint32_t* edgePorts = eamalloc(globalParams->edgeNodeCount, sizeof(uint32_t), 0);
 
-	bool addrExhausted = false;
-	ip4Addr rootAddr;
-	gmlGenerateIp(&ctx, &addrExhausted, &rootAddr);
-	if (addrExhausted) {
-		lprintln(LogError, "The edge node subnets completely fill the unreserved IPv4 space. Some addresses must be left for internal networking interfaces in the emulator.");
-		err = 1;
-		goto cleanup;
+	ip4Addr rootAddrs[2];
+	for (int i = 0; i < 2; ++i) {
+		bool addrExhausted = false;
+		gmlGenerateIp(&ctx, &addrExhausted, &rootAddrs[i]);
+		if (addrExhausted) {
+			lprintln(LogError, "The edge node subnets completely fill the unreserved IPv4 space. Some addresses must be left for internal networking interfaces in the emulator.");
+			err = 1;
+			goto cleanup;
+		}
 	}
 
-	err = workAddRoot(rootAddr);
+	err = workAddRoot(rootAddrs[0], rootAddrs[1]);
 	if (err != 0) goto cleanup;
 
 	// Move all interfaces associated with edge nodes into the root namespace

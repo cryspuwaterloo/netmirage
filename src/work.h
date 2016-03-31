@@ -34,7 +34,7 @@ int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac);
 
 // Creates a network namespace called the "root", which provides connectivity to
 // the external world.
-int workAddRoot(ip4Addr addr);
+int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther);
 
 // Adds an external interface to the root namespace. This removes it from the
 // init namespace, so it will appear to vanish from a simple "ifconfig" listing.
