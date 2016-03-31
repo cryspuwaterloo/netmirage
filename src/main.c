@@ -16,9 +16,6 @@
 #include <argp.h>
 #include <glib.h>
 #include <libxml/parser.h>
-#ifdef DEBUG
-#include <mcheck.h>
-#endif
 
 #include "ip.h"
 #include "log.h"
@@ -326,10 +323,6 @@ cleanup:
 #define DEFAULT_OVS_DIR    "/tmp/sneac"
 
 int main(int argc, char** argv) {
-	#ifdef DEBUG
-		mtrace();
-	#endif
-
 	// Initialize libxml and ensure that the shared object is correct version
 	LIBXML_TEST_VERSION
 

@@ -2,22 +2,51 @@
 
 #include <stdlib.h>
 
-// These operations perform arithmetic on two operands, return the result in the
-// third, and return true if and only if the result overflowed.
-#ifdef __GNUC__
-#define add_overflow __builtin_add_overflow
-#define sub_overflow __builtin_sub_overflow
-#define mul_overflow __builtin_mul_overflow
+// These operations perform arithmetic on two operands and return the result in
+// the third. If an overflow occurs, the program aborts. All values are
+// unsigned.
+#if __GNUC__ >= 5
+#define eadd32(a, b, res) do{ if (__builtin_add_overflow((a), (b), (res))) abort(); }while(0)
+#define eadd64(a, b, res) eadd32((a), (b), (res))
+#define eaddSize(a, b, res) eadd32((a), (b), (res))
+#define esub32(a, b, res) do{ if (__builtin_sub_overflow((a), (b), (res))) abort(); }while(0)
+#define esub64(a, b, res) esub32((a), (b), (res))
+#define esubSize(a, b, res) esub32((a), (b), (res))
+#define emul32(a, b, res) do{ if (__builtin_mul_overflow((a), (b), (res))) abort(); }while(0)
+#define emul64(a, b, res) emul32((a), (b), (res))
+#define emulSize(a, b, res) emul32((a), (b), (res))
 #else
-#error "Integral overflow functions require GCC"
+// Compatibility with older GCC. For details, see https://www.fefe.de/intof.html
+#include <stdint.h>
+#define __eadd(a, b, res, t, m) do{ t __a = (a); t __b = (b); if (m - __b < __a) abort(); *(res)=__a+__b; }while(0)
+#define eadd32(a, b, res) __eadd((a), (b), (res), uint32_t, UINT32_MAX)
+#define eadd64(a, b, res) __eadd((a), (b), (res), uint64_t, UINT64_MAX)
+#define eaddSize(a, b, res) __eadd((a), (b), (res), size_t, SIZE_MAX)
+#define __esub(a, b, res, t) do{ t __a = (a); t __b = (b); if (__b > __a) abort(); *(res)=__a-__b; }while(0)
+#define esub32(a, b, res) __esub((a), (b), (res), uint32_t)
+#define esub64(a, b, res) __esub((a), (b), (res), uint64_t)
+#define esubSize(a, b, res) __esub((a), (b), (res), size_t)
+#define emul32(a, b, res) do{ uint64_t __res = (uint64_t)(a)*(b); if (__res > UINT32_MAX) abort(); *(res)=(uint32_t)__res; }while(0)
+#define emul64(a, b, res) do{ \
+		uint64_t __ma = (a); uint64_t __mb = (b); \
+		uint64_t __a1 = __ma >> 32; uint64_t __b1 = __mb >> 32; \
+		uint64_t __a0 = __ma & UINT32_MAX; uint64_t __b0 = __mb & UINT32_MAX; \
+		if (__a1 > 0 && __b1 > 0) abort(); \
+		__ma = (uint64_t)__a1*__b0 + (uint64_t)__a0*__b1; \
+		if (__ma > UINT32_MAX) abort(); \
+		eadd64((__ma << 32), (uint64_t)__a0*__b0, res); \
+	}while(0)
+#if SIZE_MAX == UINT64_MAX
+#define emulSize(a, b, res) emul64((a), (b), (res))
+#elif SIZE_MAX == UINT32_MAX
+#define emulSize(a, b, res) emul32((a), (b), (res))
+#else
+#error "Unsupported size_t size in GCC 4 compatibility mode"
+#endif
 #endif
 
-// These statement macros perform arithmetic on arbitrary integers and abort on
-// overflow. They have the same argument structure as the *_overflow functions.
-#define eadd(a, b, res) do{ if (add_overflow((a), (b), (res))) abort(); } while(0)
-#define esub(a, b, res) do{ if (sub_overflow((a), (b), (res))) abort(); } while(0)
-#define emul(a, b, res) do{ if (mul_overflow((a), (b), (res))) abort(); } while(0)
-
+// These functions are analogous to malloc, calloc, and realloc, but abort if
+// they fail to allocate memory.
 void* emalloc(size_t size);
 void* ecalloc(size_t count, size_t eltsize);
 void* erealloc(void* ptr, size_t newsize);

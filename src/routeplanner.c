@@ -156,7 +156,7 @@ routePlanner* rpNewPlanner(nodeId nodeCount) {
 	planner->nodeCount = nodeCount;
 
 	nodeId cellCount;
-	emul(nodeCount, nodeCount, &cellCount);
+	emul32(nodeCount, nodeCount, &cellCount);
 	planner->edges = eamalloc(cellCount, sizeof(edgeInfo), 0);
 
 	// Set initial weights and "next" identifiers. We traverse the edges in

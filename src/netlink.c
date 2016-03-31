@@ -17,6 +17,11 @@
 // Struct definition
 #include "netlink.inl"
 
+// GCC <= 4 raises false warnings for RTA_ALIGN with -Werror=sign-conversion
+#if __GNUC__ <= 4
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif
+
 // Raw buffer used to hold the message being constructed or received. We share a
 // buffer for all contexts. Even if we did not do this, the module is already
 // not thread-safe because of namespaces being bound to the process. This way,

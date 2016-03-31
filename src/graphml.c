@@ -35,7 +35,7 @@ static void copyXmlStr(xmlCharBuffer* dst, const xmlChar* src) {
 	// except for the final terminator, so we can treat these like C-strings for
 	// the purpose of copying.
 	size_t srcLen = strlen((const char*)src);
-	eadd(srcLen, 1, &srcLen);
+	eaddSize(srcLen, 1, &srcLen);
 	flexBufferGrow((void**)&dst->data, 0, &dst->cap, srcLen, 1);
 	flexBufferAppend(dst->data, NULL, src, srcLen, 1);
 }
