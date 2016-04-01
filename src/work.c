@@ -436,10 +436,12 @@ int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, cons
 	int intfIdx2 = netGetInterfaceIndex(net2, intf2, &err);
 	if (intfIdx2 == -1) return err;
 
+	// We allow "route exists" errors because we might try to add routes to the
+	// same internal nodes multiple times. In practice, this is rare.
 	err = netAddRoute(net1, TableMain, ScopeGlobal, subnet2->addr, subnet2->prefixLen, ip2, intfIdx1, true);
-	if (err != 0) return err;
+	if (err != 0 && err != EEXIST) return err;
 	err = netAddRoute(net2, TableMain, ScopeGlobal, subnet1->addr, subnet1->prefixLen, ip1, intfIdx2, true);
-	if (err != 0) return err;
+	if (err != 0 && err != EEXIST) return err;
 
 	return 0;
 }

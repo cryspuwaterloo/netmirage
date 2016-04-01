@@ -253,8 +253,10 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 			if (nlm->nlmsg_type == NLMSG_ERROR) {
 				struct nlmsgerr* nlerr = NLMSG_DATA(nlm);
 				if (nlerr->error != 0) {
-					// Errors reported by the kernel are negative
-					lprintf(LogError, "Netlink-reported error for %p: %s\n", ctx, strerror(-nlerr->error));
+					// Errors reported by the kernel are negative. We log this
+					// at the LogDebug level because errors might be expected by
+					// the caller.
+					lprintf(LogDebug, "Netlink-reported error for %p: %s\n", ctx, strerror(-nlerr->error));
 					return -nlerr->error;
 				}
 			}
