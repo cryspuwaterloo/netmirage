@@ -19,10 +19,11 @@ char* ovsVersion(void);
 // All of the files (e.g., management sockets, PID files, logs) are stored in
 // the given directory. directory should be a valid pointer until ovsFree is
 // called. If ovsSchema is set, it is used to load the OVS schema for OVSDB. If
-// ovsSchema is NULL, then the default path is used. Returns a new OVS context
-// on success. If an error occurs, returns NULL and sets err to the error code
-// (if err is not NULL).
-ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSchema, int* err);
+// ovsSchema is NULL, then the default path is used. If existing is true, then
+// the function will reference an existing Open vSwitch instance rather than
+// creating one. Returns a new OVS context on success. If an error occurs,
+// returns NULL and sets err to the error code (if err is not NULL).
+ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSchema, bool existing, int* err);
 
 // Releases resources associated with a given Open vSwitch instance, but allows
 // it to continue running.

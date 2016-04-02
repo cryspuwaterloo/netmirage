@@ -20,8 +20,8 @@
 #include "ip.h"
 #include "log.h"
 #include "mem.h"
-#include "version.h"
 #include "setup.h"
+#include "version.h"
 
 // TODO: normalize naming conventions for "client", "root", etc.
 // TODO: follow POSIX reserved identifier conventions
@@ -323,6 +323,20 @@ cleanup:
 #define DEFAULT_OVS_DIR    "/tmp/sneac"
 
 int main(int argc, char** argv) {
+	// If any errors appear during startup, we send them to stderr. However, our
+	// convention is to print directly to stderr without logging decoration for
+	// configuration errors.
+	logSetStream(stderr);
+	logSetThreshold(LogWarning);
+
+	// Launch worker processes so that we can drop our privileges as quickly as
+	// possible (note that we have not handled any user input at this point)
+	if (setupInit() != 0) {
+		lprintln(LogError, "Failed to start worker processes. Elevation may be required.");
+		logCleanup();
+		return 1;
+	}
+
 	// Initialize libxml and ensure that the shared object is correct version
 	LIBXML_TEST_VERSION
 
@@ -379,12 +393,6 @@ int main(int argc, char** argv) {
 	args.gmlParams.weightKey = "latency";
 	args.gmlParams.twoPass = false;
 
-	// If any errors appear during configuration parsing, we send them to
-	// stderr. However, our convention is to print directly to stderr without
-	// logging decoration for configuration errors.
-	logSetStream(stderr);
-	logSetThreshold(args.verbosity);
-
 	int err = 0;
 
 	// In our first argument pass, find out if a setup file was specified
@@ -421,7 +429,7 @@ int main(int argc, char** argv) {
 
 	lprintln(LogInfo, "Starting SNEAC: The Large-Scale Network Emulator");
 
-	err = setupInit(&args.params);
+	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;
 
 	if (args.cleanup) {
@@ -441,8 +449,8 @@ int main(int argc, char** argv) {
 		lprintln(LogInfo, "All operations completed successfully");
 	}
 
-	setupCleanup();
 cleanup:
+	setupCleanup();
 	if (args.params.edgeNodes != NULL) {
 		for (size_t i = 0; i < args.params.edgeNodeCount; ++i) {
 			edgeNodeParams* edge = &args.params.edgeNodes[i];

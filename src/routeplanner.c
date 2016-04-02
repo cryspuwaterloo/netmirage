@@ -359,7 +359,9 @@ static void rpProcessChunkThreaded(routePlanner* planner, nodeId blockRowSize, n
 		unit->startIndex = loopIdx;
 		g_thread_pool_push(planner->pool, unit, NULL);
 	}
-	g_cond_wait(range.finished, range.todoLock);
+	while (range.todoCount > 0) {
+		g_cond_wait(range.finished, range.todoLock);
+	}
 	g_mutex_unlock(range.todoLock);
 }
 

@@ -52,9 +52,14 @@ typedef struct {
 	const char* clientType; // Value for "type" identifying client nodes
 } setupGraphMLParams;
 
-// Initializes the setup system with the given global parameters. Returns 0 on
+// Initializes the setup system. setupConfigure must be called before any
+// source-specific setup functions. Returns 0 on success or an error code
+// otherwise.
+int setupInit(void);
+
+// Configures the setup system with the given global parameters. Returns 0 on
 // success or an error code otherwise.
-int setupInit(const setupParams* params);
+int setupConfigure(const setupParams* params);
 
 // Releases all setup-related resources. The program must not call any other
 // setup calls after this.

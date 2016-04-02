@@ -6,30 +6,41 @@
 // thread whose primary purpose is performing I/O operations. The calls are all
 // asynchronous. If an error occurs, it is returned by subsequent calls before
 // they perform their function. The join operation, which waits for all work to
-// finish, will return any queued errors. A value of 0 indicates no error.
+// finish, will return any queued errors. Some calls automatically perform the
+// join operation before or after executing; these cases are marked. A NULL
+// return value indicates that no error was queued. If an error occurs while one
+// is already queued, one of the errors will be dropped, so the caller is
+// expected to cease all work operations after encountering an error.
 
 #include <stdint.h>
 #include <stdlib.h>
 
 #include "ip.h"
+#include "log.h"
 #include "topology.h"
 
 #define NEEDED_MACS_LINK 2
 #define NEEDED_MACS_CLIENT (2 * NEEDED_MACS_LINK)
 
-// Initializes the work subsystem. Free resources with workJoin. nsPrefix,
-// ovsDir, and ovsSchema are expected to be valid until workCleanup is called.
-int workInit(const char* nsPrefix, const char* ovsDir, const char* ovsSchema, uint64_t softMemCap);
+// Initializes the work subsystem. Free resources with workCleanup.
+// workConfigure must be called before sending any work commands.
+int workInit(void);
 
-// Frees all resources associated with the work subsystem.
+// Sends configuration values to the initialized work subsystem.
+int workConfigure(LogLevel logThreshold, bool logColorize, const char* nsPrefix, const char* ovsDir, const char* ovsSchema, uint64_t softMemCap);
+
+// Frees all resources associated with the work subsystem. This function
+// automatically joins before cleaning up.
 int workCleanup(void);
 
 // Determines the MAC address of an edge node connected to a physical interface.
-// The semantics are the same as netGetMacAddr.
+// The semantics are the same as netGetMacAddr. Since this function returns a
+// response, it automatically joins.
 int workGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMac);
 
 // Determines the MAC address of a physical interface connected to an edge node.
 // Assumes that the interface has already been moved into the root namespace.
+// Since this function returns a response, it automatically joins.
 int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac);
 
 // Creates a network namespace called the "root", which provides connectivity to
@@ -40,8 +51,7 @@ int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther);
 // init namespace, so it will appear to vanish from a simple "ifconfig" listing.
 // The interface is added to the switch, thereby connecting it to to virtual
 // network. The port number of the interface in the bridge is returned in
-// portId, which is needed to set up client routes. Returns 0 on success or an
-// error code otherwise.
+// portId, which is needed to set up client routes.
 int workAddEdgeInterface(const char* intfName, uint32_t* portId);
 
 // Creates a new virtual host in its own network namespace. If the node is a
@@ -74,7 +84,7 @@ int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* 
 
 // Adds egression routes for an edge node to the switch in the root namespace.
 // edgeLocalMac should be the MAC address associated with the edge interface,
-// and edgeRemoteMav should be the MAC address of the remote edge node, as
+// and edgeRemoteMac should be the MAC address of the remote edge node, as
 // returned by workGetEdgeMac and workGetEdgeLocalMac.
 int workAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const macAddr* edgeLocalMac, const macAddr* edgeRemoteMac);
 
@@ -82,7 +92,9 @@ int workAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const macA
 // instance is running for a root namespace, it is shut down and deleted. If
 // deletedHosts is not NULL, the number of deleted hosts is stored. If an error
 // was encountered, the value of deletedHosts is undefined.
-int workDestroyHosts(uint32_t* deletedHosts);
+int workDestroyHosts(void);
 
-// Waits until all submitted work has been completed and releases all resources.
-int workJoin(void);
+// Waits until all submitted work has been completed. If resetError is true,
+// then all queued errors are ignored, and the error state of the subsystem is
+// reset.
+int workJoin(bool resetError);

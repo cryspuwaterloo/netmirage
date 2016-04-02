@@ -22,15 +22,32 @@
 
 static const setupParams* globalParams;
 
-int setupInit(const setupParams* params) {
+#define DO_OR_GOTO(stmt, label, res) do{ \
+	res = (stmt); \
+	if (res != 0) { \
+		goto label; \
+	} \
+}while(0)
+
+#define DO_OR_RETURN(stmt) do{ \
+	int __err = (stmt); \
+	if (__err != 0) { \
+		return __err; \
+	} \
+}while(0)
+
+int setupInit(void) {
+	DO_OR_RETURN(workInit());
+	return 0;
+}
+
+int setupConfigure(const setupParams* params) {
 	globalParams = params;
-	int res = workInit(params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap);
-	if (res != 0) return res;
+	DO_OR_RETURN(workConfigure(logThreshold(), logColorized(), params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap));
 
 	if (params->edgeNodeCount < 1) {
 		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
-		res = 1;
-		goto cleanup;
+		return 1;
 	}
 
 	// Complete definitions for edge nodes by filling in default / missing data
@@ -42,20 +59,13 @@ int setupInit(const setupParams* params) {
 				char ip[IP4_ADDR_BUFLEN];
 				ip4AddrToString(edge->ip, ip);
 				lprintf(LogError, "No interface was specified for edge node with IP %s. Either specify an interface, or specify --iface if all edge nodes are behind the same one.\n", ip);
-				res = 1;
-				goto cleanup;
+				return 1;
 			}
 			edge->intf = eamalloc(strlen(params->edgeNodeDefaults.intf), 1, 1);
 			strcpy(edge->intf, params->edgeNodeDefaults.intf);
 		}
 		if (!edge->macSpecified) {
-			res = workGetEdgeRemoteMac(edge->intf, edge->ip, &edge->mac);
-			if (res != 0) {
-				char ip[IP4_ADDR_BUFLEN];
-				ip4AddrToString(edge->ip, ip);
-				lprintf(LogError, "Could not locate the MAC address for edge node with IP %s on interface '%s'. Verify that the host is online, or configure the MAC address manually.\n", ip, edge->intf);
-				goto cleanup;
-			}
+			DO_OR_RETURN(workGetEdgeRemoteMac(edge->intf, edge->ip, &edge->mac));
 		}
 		if (!edge->vsubnetSpecified) {
 			++edgeSubnetsNeeded;
@@ -102,31 +112,22 @@ int setupInit(const setupParams* params) {
 		ip4SubnetToString(&edge->vsubnet, subnet);
 		lprintf(LogInfo, "Configured edge node: IP %s, interface %s, MAC %s, client subnet %s\n", ip, edge->intf, mac, subnet);
 	}
-	if (subnetErr) {
-		res = 1;
-		goto cleanup;
-	}
+	if (subnetErr) return 1;
 
 	return 0;
-cleanup:
-	workCleanup();
-	return res;
 }
 
 int setupCleanup(void) {
-	return workCleanup();
+	DO_OR_RETURN(workCleanup());
+	return 0;
 }
 
 int destroyNetwork(void) {
+	DO_OR_RETURN(workJoin(true));
 	lprintf(LogInfo, "Destroying any existing virtual network with namespace prefix '%s'\n", globalParams->nsPrefix);
+	DO_OR_RETURN(workDestroyHosts());
+	DO_OR_RETURN(workJoin(false));
 
-	uint32_t deletedHosts;
-	int err = workDestroyHosts(&deletedHosts);
-	if (err != 0) return err;
-
-	if (deletedHosts > 0) {
-		lprintf(LogInfo, "Destroyed an existing virtual network with %lu hosts\n", deletedHosts);
-	}
 	return 0;
 }
 
@@ -238,30 +239,36 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, id, ip);
 	}
 
-	return workAddHost(id, state->addr, state->clientMacs, &node->t);
+	DO_OR_RETURN(workAddHost(id, state->addr, state->clientMacs, &node->t));
+	return 0;
+}
+
+static int gmlOnFinishedNodes(gmlContext* ctx) {
+	lprintln(LogInfo, "Host creation complete. Now adding virtual ethernet connections.");
+	lprintf(LogDebug, "Encountered %u nodes (%u clients)\n", ctx->nodeCount, ctx->clientNodes);
+	if (ctx->clientNodes < globalParams->edgeNodeCount) {
+		lprintf(LogError, "There are fewer client nodes in the topology (%u) than edges nodes (%u). Either use a larger topology, or decrease the number of edge nodes.\n", ctx->clientNodes, globalParams->edgeNodeCount);
+		return 1;
+	}
+
+	uint64_t worstCaseLinkCount = (uint64_t)ctx->nodeCount * (uint64_t)ctx->nodeCount;
+	DO_OR_RETURN(workJoin(false));
+	DO_OR_RETURN(workEnsureSystemScaling(worstCaseLinkCount, (nodeId)ctx->nodeCount, (nodeId)ctx->clientNodes));
+	DO_OR_RETURN(workJoin(false));
+
+	ctx->clientsPerEdge = (double)ctx->clientNodes / (double)globalParams->edgeNodeCount;
+	ctx->routes = rpNewPlanner((nodeId)ctx->nodeCount);
+	return 0;
 }
 
 static int gmlAddLink(const GmlLink* link, void* userData) {
 	gmlContext* ctx = userData;
-	int res = 0;
 
 	if (ctx->ignoreEdges) return 0;
 	if (!ctx->finishedNodes) {
 		ctx->finishedNodes = true;
-
-		lprintln(LogInfo, "Host creation complete. Now adding virtual ethernet connections.");
-		lprintf(LogDebug, "Encountered %u nodes (%u clients)\n", ctx->nodeCount, ctx->clientNodes);
-		if (ctx->clientNodes < globalParams->edgeNodeCount) {
-			lprintf(LogError, "There are fewer client nodes in the topology (%u) than edges nodes (%u). Either use a larger topology, or decrease the number of edge nodes.\n", ctx->clientNodes, globalParams->edgeNodeCount);
-			return 1;
-		}
-
-		uint64_t worstCaseLinkCount = (uint64_t)ctx->nodeCount * (uint64_t)ctx->nodeCount;
-		res = workEnsureSystemScaling(worstCaseLinkCount, (nodeId)ctx->nodeCount, (nodeId)ctx->clientNodes);
+		int res = gmlOnFinishedNodes(ctx);
 		if (res != 0) return res;
-
-		ctx->clientsPerEdge = (double)ctx->clientNodes / (double)globalParams->edgeNodeCount;
-		ctx->routes = rpNewPlanner((nodeId)ctx->nodeCount);
 	}
 
 	nodeId sourceId, targetId;
@@ -272,7 +279,7 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 
 	if (sourceId == targetId) {
 		if (sourceState->isClient) {
-			res = workSetSelfLink(sourceId, &link->t);
+			DO_OR_RETURN(workSetSelfLink(sourceId, &link->t));
 		}
 	} else {
 		macAddr macs[NEEDED_MACS_LINK];
@@ -280,18 +287,16 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			lprintln(LogError, "Ran out of MAC addresses when adding a new virtual ethernet connection.");
 			return 1;
 		}
-		res = workAddLink(sourceId, targetId, sourceState->addr, targetState->addr, macs, &link->t);
-		if (res == 0) {
-			if (link->weight < 0.f) {
-				lprintf(LogError, "The link from '%s' to '%s' in the topology has negative weight %f, which is not supported.\n", link->sourceName, link->targetName, link->weight);
-				res = 1;
-			} else {
-				rpSetWeight(ctx->routes, sourceId, targetId, link->weight);
-				rpSetWeight(ctx->routes, targetId, sourceId, link->weight);
-			}
+		DO_OR_RETURN(workAddLink(sourceId, targetId, sourceState->addr, targetState->addr, macs, &link->t));
+		if (link->weight < 0.f) {
+			lprintf(LogError, "The link from '%s' to '%s' in the topology has negative weight %f, which is not supported.\n", link->sourceName, link->targetName, link->weight);
+			return 1;
+		} else {
+			rpSetWeight(ctx->routes, sourceId, targetId, link->weight);
+			rpSetWeight(ctx->routes, targetId, sourceId, link->weight);
 		}
 	}
-	return res;
+	return 0;
 }
 
 static bool gmlNextEdge(gmlContext* ctx) {
@@ -390,8 +395,8 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		}
 	}
 
-	err = workAddRoot(rootAddrs[0], rootAddrs[1]);
-	if (err != 0) goto cleanup;
+	DO_OR_GOTO(workAddRoot(rootAddrs[0], rootAddrs[1]), cleanup, err);
+	DO_OR_GOTO(workJoin(false), cleanup, err);
 
 	// Move all interfaces associated with edge nodes into the root namespace
 	for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
@@ -411,15 +416,14 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		}
 		if (duplicate) continue;
 
-		err = workAddEdgeInterface(edge->intf, &edgePorts[i]);
-		if (err != 0) goto cleanup;
+		DO_OR_GOTO(workAddEdgeInterface(edge->intf, &edgePorts[i]), cleanup, err);
+		DO_OR_GOTO(workJoin(false), cleanup, err);
 
 		macAddr edgeLocalMac;
-		err = workGetEdgeLocalMac(edge->intf, &edgeLocalMac);
-		if (err != 0) goto cleanup;
-		err = workAddEdgeRoutes(&edge->vsubnet, edgePorts[i], &edgeLocalMac, &edge->mac);
-		if (err != 0) goto cleanup;
+		DO_OR_GOTO(workGetEdgeLocalMac(edge->intf, &edgeLocalMac), cleanup, err);
+		DO_OR_GOTO(workAddEdgeRoutes(&edge->vsubnet, edgePorts[i], &edgeLocalMac, &edge->mac), cleanup, err);
 	}
+	DO_OR_GOTO(workJoin(false), cleanup, err);
 
 	if (globalParams->srcFile) {
 		int passes = gmlParams->twoPass ? 2 : 1;
@@ -451,6 +455,8 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		err = gmlParse(stdin, &gmlAddNode, &gmlAddLink, &ctx, gmlParams->clientType, gmlParams->weightKey);
 	}
 
+	DO_OR_GOTO(workJoin(false), cleanup, err);
+
 	// Host and link construction is finished. Now we set up routing
 	lprintln(LogInfo, "Setting up static routing for the network");
 
@@ -476,8 +482,10 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 			ip4SubnetToString(&node->clientSubnet, subnet);
 			lprintf(LogDebug, "Assigned client node %u to subnet %s owned by edge %lu\n", id, subnet, edgeIdx);
 		}
-		err = workAddClientRoutes((nodeId)id, node->clientMacs, &node->clientSubnet, edgePorts[edgeIdx]);
-		if (err != 0) goto cleanup;
+		DO_OR_GOTO(workAddClientRoutes((nodeId)id, node->clientMacs, &node->clientSubnet, edgePorts[edgeIdx]), cleanup, err);
+		// We need to join here because Open vSwitch locks the database file
+		// when processing commands. They cannot be parallelized.
+		DO_OR_GOTO(workJoin(false), cleanup, err);
 	}
 
 	// Build routes between every pair of client nodes
@@ -510,13 +518,15 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 			for (nodeId step = 1; step < steps; ++step) {
 				nodeId nextId = path[step];
 				lprintf(LogDebug, "Hop %d for %u => %u: %u => %u\n", step, startId, endId, prevId, nextId);
-				err = workAddInternalRoutes(prevId, nextId, ctx.nodeStates[prevId].addr, ctx.nodeStates[nextId].addr, &start->clientSubnet, &end->clientSubnet);
-				if (err != 0) goto cleanup;
+				DO_OR_GOTO(workAddInternalRoutes(prevId, nextId, ctx.nodeStates[prevId].addr, ctx.nodeStates[nextId].addr, &start->clientSubnet, &end->clientSubnet), cleanup, err);
+				// Another join mandated by locking Open vSwitch commands
+				DO_OR_GOTO(workJoin(false), cleanup, err);
 
 				prevId = nextId;
 			}
 		}
 	}
+	DO_OR_GOTO(workJoin(false), cleanup, err);
 
 cleanup:
 	if (ctx.clientIter != NULL) ip4FreeFragIter(ctx.clientIter);

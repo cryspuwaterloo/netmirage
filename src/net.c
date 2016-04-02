@@ -62,7 +62,9 @@
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
 
-const size_t InterfaceBufLen = IFNAMSIZ;
+#if INTERFACE_BUF_LEN != IFNAMSIZ
+#error "Mismatch between internal interface name buffer length and the buffer length for this kernel."
+#endif
 
 // Ensures that the network namespace folders exist and are mounted.
 static int setupNamespaceEnvironment(void) {
@@ -216,9 +218,6 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 		excl = false;
 	}
 
-	errno = nlNewContextInPlace(&ctx->nl);
-	if (errno != 0) goto deleteAbort;
-
 	// We have to switch if the namespace already existed and we just opened it.
 	// Otherwise, ioctl will be bound to the wrong namespace.
 	if (mustSwitch) {
@@ -228,6 +227,9 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 			goto freeDeleteAbort;
 		}
 	}
+
+	errno = nlNewContextInPlace(&ctx->nl);
+	if (errno != 0) goto deleteAbort;
 
 	// We need a socket descriptor specifically for ioctl in order to bind the
 	// calls to the correct net namespace. ioctl does not accept namespace bind
@@ -375,6 +377,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 			lprintDirectf(LogDebug, ", mac2=%s", mac);
 		}
 		lprintDirectf(LogDebug, "\n");
+		lprintDirectFinish(LogDebug);
 	}
 
 	// The netlink socket used for this message does not matter, since we
@@ -572,6 +575,7 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 			lprintDirectf(LogDebug, ", rate %.3lfMbit/s", rateMbit);
 		}
 		lprintDirectf(LogDebug, ", queue len %lu\n", queueLen);
+		lprintDirectFinish(LogDebug);
 	}
 
 	// There are many ways to construct both latency and rate limiting with the
@@ -627,7 +631,7 @@ int netAddStaticArp(netContext* ctx, const char* intfName, ip4Addr ip, const mac
 
 	arpr.arp_flags = ATF_COM | ATF_PERM;
 
-	strncpy(arpr.arp_dev, intfName, InterfaceBufLen);
+	strncpy(arpr.arp_dev, intfName, INTERFACE_BUF_LEN);
 
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char ipStr[IP4_ADDR_BUFLEN];

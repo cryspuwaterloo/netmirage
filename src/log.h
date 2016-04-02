@@ -23,12 +23,27 @@ bool logSetFile(const char* filename);
 // Configures the log to write to a stream
 void logSetStream(FILE* output);
 
+typedef void (*logCallback)(const char* msg);
+
+// Configures the log to redirect strings to a callback function. These strings
+// are only valid for the duration of the call. A single print may result in
+// multiple calls tbool logColorized(void)o the callback. However, each print "line" will end with a
+// call having NULL as the argument.
+void logSetCallback(logCallback callback);
+
 // Turns colors on or off. Note that calls to logSetFile and logSetStream
 // implicitly modify the color mode, so this should be called after them.
 void logSetColorize(bool enabled);
+bool logColorized(void);
+
+// Adds a prefix to the head of all messages. The string must be valid until
+// logSetPrefix is called again with a NULL parameter.
+void logSetPrefix(const char* prefix);
+const char* logPrefix(void);
 
 // Configures the log verbosity threshold
 void logSetThreshold(LogLevel level);
+LogLevel logThreshold(void);
 
 #define PASSES_LOG_THRESHOLD(x) ((x) >= _logThreshold)
 
@@ -51,9 +66,14 @@ extern LogLevel _logThreshold;
 #define lvprintf(level, fmt, args) do{ if (PASSES_LOG_THRESHOLD(level)) { _lvprintf((level), (fmt), (args)); } }while(0)
 
 // Logging functions with control over the line header. Avoid when possible.
+// When used, the log will be locked until lprintDirectFinish is called. This
+// can lead to deadlocks if the caller does not release the lock after calling
+// lprintHead. lprintRaw prints a raw message without applying any log settings.
 #define lprintHead(level) do{ if (PASSES_LOG_THRESHOLD(level)) { _lprintHead(level); } }while(0)
 #define lprintDirectf(level,  fmt, ...) do{ if (PASSES_LOG_THRESHOLD(level)) { _lprintDirectf((fmt), ##__VA_ARGS__); } }while(0)
 #define lvprintDirectf(level, fmt, args) do{ if (PASSES_LOG_THRESHOLD(level)) { _lvprintDirectf((fmt), (args)); } }while(0)
+#define lprintDirectFinish(level) do{ if (PASSES_LOG_THRESHOLD(level)) { _lprintDirectFinish(); } }while(0)
+#define lprintRaw(str) do{ _lprintRaw(str); }while(0)
 
 // Convenience functions that are often useful for logging operations. Similar
 // to the behavior of Linux's (v)asprintf.
@@ -69,3 +89,6 @@ void _lprintHead(LogLevel level);
 // The macros require a logging level for these, but internal functions do not:
 void _lprintDirectf(/*LogLevel level*/ const char* fmt, ...);
 void _lvprintDirectf(/*LogLevel level*/ const char* fmt, va_list args);
+void _lprintDirectFinish(/*LogLevel level*/ void);
+
+void _lprintRaw(const char* str);

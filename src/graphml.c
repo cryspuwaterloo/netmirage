@@ -129,6 +129,9 @@ static void showXmlError(void* ctx, const char* msg, ...) {
 		char* p;
 		for (p = errBuffer; *p; ++p);
 		state->partialError = (errBuffer[0] != '\0' && p[-1] != '\n');
+		if (!state->partialError) {
+			lprintDirectFinish(LogError);
+		}
 
 		free(errBuffer);
 	}
@@ -143,6 +146,7 @@ static void graphFatalError(GraphParserState* state, const char* fmt, ...) {
 	lprintHead(LogError);
 	lprintDirectf(LogError, "GraphML parse error: ");
 	lvprintDirectf(LogError, fmt, args);
+	lprintDirectFinish(LogError);
 	va_end(args);
 	state->dead = true;
 }

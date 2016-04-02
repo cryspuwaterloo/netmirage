@@ -35,6 +35,8 @@ static int switchContext(ovsContext* ctx) {
 #define OVS_CMD_MAX_ARGS 20
 #define OVSDB_CTL_FILE "ovsdb-server.ctl"
 #define OVS_CTL_FILE "ovs-vswitchd.ctl"
+#define LKM_LIST_FILE "/proc/modules"
+#define LKM_OVS_NAME "openvswitch"
 
 // Forks and executes an OVS command with the given arguments. The first
 // argument is automatically set to be the command. Must call switchContext
@@ -58,6 +60,7 @@ static int ovsCommandVArg(char** output, size_t* outputLen, size_t* outputCap, c
 	va_end(args);
 	argv[argCount] = NULL;
 	lprintDirectf(LogDebug, "\n");
+	lprintDirectFinish(LogDebug);
 
 	int pipefd[2];
 	errno = 0;
@@ -81,9 +84,9 @@ static int ovsCommandVArg(char** output, size_t* outputLen, size_t* outputCap, c
 		close(pipefd[0]);
 		close(STDIN_FILENO);
 		errno = 0;
-		if (!dup2(pipefd[1], STDOUT_FILENO)) exit(errno);
+		if (dup2(pipefd[1], STDOUT_FILENO) == -1) exit(errno);
 		errno = 0;
-		if (!dup2(pipefd[1], STDERR_FILENO)) exit(errno);
+		if (dup2(pipefd[1], STDERR_FILENO) == -1) exit(errno);
 		close(pipefd[1]);
 
 		char* envp[] = { NULL, NULL };
@@ -178,17 +181,69 @@ char* ovsVersion(void) {
 	return version;
 }
 
-ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSchema, int* err) {
-	lprintf(LogDebug, "Starting Open vSwitch instance in namespace %p with state directory %s\n", net, directory);
+static int ovsModuleLoad(void) {
+	// Open vSwitch includes a kernel module component. If it is not loaded,
+	// then subsequent OVS commands may fail with inscrutable errors. We check
+	// to make sure that it is loaded.
+	FILE* modFile = fopen(LKM_LIST_FILE, "r");
+	if (modFile == NULL) {
+		lprintln(LogWarning, "Failed to open Linux kernel module list from " LKM_LIST_FILE ". If setting up the virtual switch fails, ensure that the '" LKM_OVS_NAME "' module is loaded.");
+		return 0;
+	}
+	char* line = NULL;
+	size_t len = 0;
+	bool modLoaded = false;
+	while (getline(&line, &len, modFile) != -1) {
+		char* sep = strchr(line, ' ');
+		if (sep != NULL) *sep = '\0';
+		if (strcmp(line, LKM_OVS_NAME) == 0) {
+			modLoaded = true;
+			break;
+		}
+	}
+	if (line != NULL) free(line);
+	fclose(modFile);
+	if (!modLoaded) {
+		lprintln(LogWarning, "The Open vSwitch kernel module ('" LKM_OVS_NAME "') does not appear to be loaded. Attempting to load the module.");
+		errno = 0;
+		pid_t probePid = fork();
+		if (probePid == -1) {
+			lprintf(LogError, "Could not fork to load kernel module: %s\n", strerror(errno));
+			return errno;
+		}
+		if (probePid == 0) {
+			fclose(stdin);
+			fclose(stdout);
+			fclose(stderr);
+			execlp("modprobe", "modprobe", LKM_OVS_NAME);
+			exit(1);
+		}
+		int probeStatus;
+		waitpid(probePid, &probeStatus, 0);
+		if (!WIFEXITED(probeStatus) || WEXITSTATUS(probeStatus) != 0) {
+			lprintln(LogWarning, "The Open vSwitch kernel module could not be loaded. Unless this distribution uses a different name for the module, setting up the virtual switch will fail. The module will need to be loaded manually.");
+			return 0;
+		}
+		lprintln(LogInfo, "The Open vSwitch kernel module was loaded successfully.");
+	}
+	return 0;
+}
+
+ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSchema, bool existing, int* err) {
+	lprintf(LogDebug, "%s Open vSwitch instance in namespace %p with state directory %s\n", (existing ? "Connecting to" : "Starting an"), net, directory);
 
 	int localErr;
 	if (err == NULL) err = &localErr;
 
-	errno = 0;
-	if (mkdir(directory, 0700) != 0 && errno != EEXIST) {
-		lprintf(LogError, "Could not create the Open vSwitch state directory '%s': %s\n", directory, strerror(errno));
-		*err = errno;
-		return NULL;
+	ovsModuleLoad();
+
+	if (!existing) {
+		errno = 0;
+		if (mkdir(directory, 0700) != 0 && errno != EEXIST) {
+			lprintf(LogError, "Could not create the Open vSwitch state directory '%s': %s\n", directory, strerror(errno));
+			*err = errno;
+			return NULL;
+		}
 	}
 
 	ovsContext* ctx = NULL;
@@ -210,31 +265,33 @@ ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSche
 	newSprintf(&ovsPidArg, "--pidfile=%s/ovs-vswitchd.pid", directory);
 	newSprintf(&ovsControlArg, "--unixctl=%s/" OVS_CTL_FILE, directory);
 
-	// First, set up the OVSDB daemon. This daemon provides access to the
-	// database file that is used to store switch data and manage the other
-	// components.
+	if (!existing) {
+		// First, set up the OVSDB daemon. This daemon provides access to the
+		// database file that is used to store switch data and manage the other
+		// components.
 
-	errno = 0;
-	if (unlink(dbFile) != 0 && errno != ENOENT) {
-		lprintf(LogError, "Could not delete Open vSwitch database file '%s': %s\n", dbFile, strerror(errno));
-		goto abort;
+		errno = 0;
+		if (unlink(dbFile) != 0 && errno != ENOENT) {
+			lprintf(LogError, "Could not delete Open vSwitch database file '%s': %s\n", dbFile, strerror(errno));
+			goto abort;
+		}
+
+		if (ovsSchema == NULL) ovsSchema = OVS_DEFAULT_SCHEMA_PATH;
+		*err = ovsCommand(directory, "ovsdb-tool", "create", dbFile, ovsSchema, NULL);
+		if (*err != 0) goto abort;
+
+		*err = ovsCommand(directory, "ovsdb-server", dbFile, "-vconsole:off", "-vsyslog:err", "-vfile:info", "--no-chdir", "--detach", "--monitor", ovsdbLogArg, ovsdbPidArg, ovsdbSocketArg, ovsdbControlArg, NULL);
+		if (*err != 0) goto abort;
+
+		*err = ovsCommand(directory, "ovs-vsctl", ovsdbSocketConnArg, "--no-wait", "init", NULL);
+		if (*err != 0) goto abort;
+
+		// Next, set up the vswitchd daemon. This daemon manages the virtual
+		// switches and their flows.
+
+		*err = ovsCommand(directory, "ovs-vswitchd", &ovsdbSocketConnArg[5], "-vconsole:off", "-vsyslog:err", "-vfile:info", "--mlockall", "--no-chdir", "--detach", "--monitor", ovsLogArg, ovsPidArg, ovsControlArg, NULL);
+		if (*err != 0) goto abort;
 	}
-
-	if (ovsSchema == NULL) ovsSchema = OVS_DEFAULT_SCHEMA_PATH;
-	*err = ovsCommand(directory, "ovsdb-tool", "create", dbFile, ovsSchema, NULL);
-	if (*err != 0) goto abort;
-
-	*err = ovsCommand(directory, "ovsdb-server", dbFile, "-vconsole:off", "-vsyslog:err", "-vfile:info", "--no-chdir", "--detach", "--monitor", ovsdbLogArg, ovsdbPidArg, ovsdbSocketArg, ovsdbControlArg, NULL);
-	if (*err != 0) goto abort;
-
-	*err = ovsCommand(directory, "ovs-vsctl", ovsdbSocketConnArg, "--no-wait", "init", NULL);
-	if (*err != 0) goto abort;
-
-	// Next, set up the vswitchd daemon. This daemon manages the virtual
-	// switches and their flows.
-
-	*err = ovsCommand(directory, "ovs-vswitchd", &ovsdbSocketConnArg[5], "-vconsole:off", "-vsyslog:err", "-vfile:info", "--mlockall", "--no-chdir", "--detach", "--monitor", ovsLogArg, ovsPidArg, ovsControlArg, NULL);
-	if (*err != 0) goto abort;
 
 	ctx = emalloc(sizeof(ovsContext));
 	ctx->net = net;
@@ -378,6 +435,7 @@ int ovsAddIpFlow(ovsContext* ctx, const char* bridge, uint32_t inPort, const ip4
 		--actionLen;
 	}
 	lprintDirectf(LogDebug, ") priority %u\n", priority);
+	lprintDirectFinish(LogDebug);
 	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", output:%u", outPort);
 
 	return ovsCommand(ctx->directory, "ovs-ofctl", "add-flow", bridge, ctx->actionBuffer, NULL);
