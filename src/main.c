@@ -320,7 +320,7 @@ cleanup:
 	return res;
 }
 
-#define DEFAULT_OVS_DIR    "/tmp/sneac"
+#define DEFAULT_OVS_DIR    "/tmp/netmirage"
 
 int main(int argc, char** argv) {
 	// If any errors appear during startup, we send them to stderr. However, our
@@ -353,7 +353,7 @@ int main(int argc, char** argv) {
 			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 2 },
 			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 2 },
 
-			{ "netns-prefix", 'p', "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"sneac-\").", 3 },
+			{ "netns-prefix", 'p', "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 3 },
 			{ "ovs-dir",      'r', "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 3 },
 			{ "ovs-schema",   'a', "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 3 },
 
@@ -380,12 +380,12 @@ int main(int argc, char** argv) {
 			{ &defaultDocArgp, 0, NULL, 100 },
 			{ NULL },
 	};
-	struct argp argp = { generalOptions, &processArg, NULL, "Sets up virtual networking infrastructure for a SNEAC core node.", children };
+	struct argp argp = { generalOptions, &processArg, NULL, "Sets up virtual networking infrastructure for a NetMirage core node.", children };
 
 	// Default arguments
 	args.cleanup = false;
 	args.verbosity = LogWarning;
-	args.params.nsPrefix = "sneac-";
+	args.params.nsPrefix = "nm-";
 	args.params.ovsDir = DEFAULT_OVS_DIR;
 	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
 	ip4GetSubnet(DEFAULT_CLIENTS_SUBNET, &args.params.edgeNodeDefaults.globalVSubnet);
@@ -427,7 +427,7 @@ int main(int argc, char** argv) {
 	logSetThreshold(args.verbosity);
 	if (err != 0) goto cleanup;
 
-	lprintln(LogInfo, "Starting SNEAC: The Large-Scale Network Emulator");
+	lprintf(LogInfo, "Starting %s\n", getVersionString());
 
 	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;

@@ -7,6 +7,8 @@ src/version.c
 .sconsign.dblite
 
 # Eclipse
+.project
+.cproject
 .metadata
 tmp/
 *.tmp

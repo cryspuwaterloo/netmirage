@@ -50,7 +50,7 @@ static const char* SelfLinkPrefix = "self";
 static const char* RootLinkPrefix = "root";
 static const char* NodeLinkPrefix = "node";
 
-static const char* RootBridgeName = "sneac-br0";
+static const char* RootBridgeName = "netmirage-br0";
 
 // Arbitrary values, but chosen to leave the user plenty of space to customize
 static const uint8_t CustomTableId = 120;
