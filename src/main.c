@@ -69,6 +69,11 @@ static struct {
 	LogLevel verbosity;
 	const char* logFile;
 
+	// Buffer for string data
+	char* argBuf;
+	size_t argBufLen;
+	size_t argBufCap;
+
 	// Actual parameters for setup procedure
 	setupParams params;
 	setupGraphMLParams gmlParams;
@@ -120,20 +125,28 @@ static error_t findSetupFile(int key, char* arg, struct argp_state* state) {
 
 // Parsing hook for argp that modifies "args" global
 static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
+	char* argCopy = NULL;
+	if (arg != NULL) {
+		size_t argLen = strlen(arg)+1;
+		flexBufferGrow((void**)&args.argBuf, args.argBufLen, &args.argBufCap, argLen, 1);
+		argCopy = &args.argBuf[args.argBufLen];
+		flexBufferAppend(args.argBuf, &args.argBufLen, arg, argLen, 1);
+	}
+
 	switch (key) {
 	case 'd': args.cleanup = true; break;
-	case 'f': args.params.srcFile = arg; break;
-	case 'r': args.params.ovsDir = arg; break;
-	case 'a': args.params.ovsSchema = arg; break;
+	case 'f': args.params.srcFile = argCopy; break;
+	case 'r': args.params.ovsDir = argCopy; break;
+	case 'a': args.params.ovsSchema = argCopy; break;
 	case 's': break; // Already parsed in our first pass
 
 	case 'i': {
 		args.params.edgeNodeDefaults.intfSpecified = true;
-		args.params.edgeNodeDefaults.intf = arg;
+		args.params.edgeNodeDefaults.intf = argCopy;
 		break;
 	}
 	case 'n': {
-		if (!ip4GetSubnet(arg, &args.params.edgeNodeDefaults.globalVSubnet)) {
+		if (!ip4GetSubnet(argCopy, &args.params.edgeNodeDefaults.globalVSubnet)) {
 			fprintf(stderr, "Invalid global virtual client subnet specified: '%s'\n", arg);
 			return EINVAL;
 		}
@@ -147,15 +160,12 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 			args.loadedEdgesFromSetup = false;
 		}
 
-		char buf[strlen(arg)+1];
-		strcpy(buf, arg);
-
-		char* ip = buf;
+		char* ip = argCopy;
 		char* intf = NULL;
 		char* mac = NULL;
 		char* vsubnet = NULL;
 
-		char* optionSep = buf;
+		char* optionSep = argCopy;
 		while (true) {
 			optionSep = strchr(optionSep, ',');
 			if (optionSep == NULL) break;
@@ -197,7 +207,7 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 	}
 
 	case 'v': {
-		long index = matchArg(arg, LogLevelStrings, state);
+		long index = matchArg(argCopy, LogLevelStrings, state);
 		if (index < 0) {
 			fprintf(stderr, "Unknown logging level '%s'\n", arg);
 			return EINVAL;
@@ -205,16 +215,16 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 		args.verbosity = index;
 		break;
 	}
-	case 'l': args.logFile = arg; break;
+	case 'l': args.logFile = argCopy; break;
 
-	case 'p': args.params.nsPrefix = arg; break;
+	case 'p': args.params.nsPrefix = argCopy; break;
 
-	case 'm': args.params.softMemCap = (size_t)(1024.0 * 1024.0 * strtod(arg, NULL)); break;
+	case 'm': args.params.softMemCap = (size_t)(1024.0 * 1024.0 * strtod(argCopy, NULL)); break;
 
 	case 'u': {
 		const char* options[] = {"shadow", "modelnet", "KiB", "Kb", NULL};
 		float divisors[] = {ShadowDivisor, ModelNetDivisor, ShadowDivisor, ModelNetDivisor};
-		long index = matchArg(arg, options, state);
+		long index = matchArg(argCopy, options, state);
 		if (index < 0) {
 			fprintf(stderr, "Unknown bandwidth units '%s'\n", arg);
 			return EINVAL;
@@ -222,8 +232,8 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 		args.gmlParams.bandwidthDivisor = divisors[index];
 		break;
 	}
-	case 'w': args.gmlParams.weightKey = arg; break;
-	case 'c': args.gmlParams.clientType = arg; break;
+	case 'w': args.gmlParams.weightKey = argCopy; break;
+	case 'c': args.gmlParams.clientType = argCopy; break;
 	case 't': args.gmlParams.twoPass = true; break;
 
 	default: return ARGP_ERR_UNKNOWN;
@@ -254,7 +264,7 @@ static bool parseSetupEmulatorOptions(GKeyFile* f, const struct argp* argp) {
 				fprintf(stderr, "In setup file: the configuration for emulator flag \"%s\" was invalid: %s\n", option->name, strerror(err));
 				return false;
 			}
-			g_free(val); // TODO: bug
+			g_free(val);
 		}
 	}
 	if (argp->children != NULL) {
@@ -393,6 +403,8 @@ int main(int argc, char** argv) {
 	args.gmlParams.weightKey = "latency";
 	args.gmlParams.twoPass = false;
 
+	flexBufferInit((void**)&args.argBuf, &args.argBufLen, &args.argBufCap);
+
 	int err = 0;
 
 	// In our first argument pass, find out if a setup file was specified
@@ -458,6 +470,7 @@ cleanup:
 		}
 	}
 	flexBufferFree((void**)&args.params.edgeNodes, &args.params.edgeNodeCount, &args.edgeNodeCap);
+	flexBufferFree((void**)&args.argBuf, &args.argBufLen, &args.argBufCap);
 	xmlCleanupParser();
 	logCleanup();
 
