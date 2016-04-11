@@ -216,6 +216,8 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 		// We need to open the file descriptor again. The one from before the
 		// bind mount is not a valid namespace descriptor.
 		excl = false;
+
+		lprintf(LogDebug, "Created network namespace mounted at '%s'\n", netNsPath);
 	}
 
 	// We have to switch if the namespace already existed and we just opened it.
@@ -242,7 +244,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 
 	ctx->fd = nsFd;
 	ctx->ioctlFd = ioctlFd;
-	lprintf(LogDebug, "Opened network namespace file at '%s' with context %p\n", netNsPath, ctx);
+	lprintf(LogDebug, "Opened network namespace file at '%s' with context %p%s\n", netNsPath, ctx, mustSwitch ? " (required switch)" : "");
 	return 0;
 freeDeleteAbort:
 	nlInvalidateContext(&ctx->nl);
@@ -325,18 +327,8 @@ int netEnumNamespaces(netNsCallback callback, void* userData) {
 
 int netSwitchNamespace(netContext* ctx) {
 	errno = 0;
-	int nsFd;
-	if (ctx != NULL) {
-		lprintf(LogDebug, "Switching to network namespace context %p\n", ctx);
-		nsFd = ctx->fd;
-	} else {
-		lprintln(LogDebug, "Switching to default network namespace");
-		nsFd = open(INIT_NS_FILE, O_RDONLY | O_CLOEXEC);
-		if (nsFd == -1) {
-			lprintf(LogError, "Failed to open init network namespace file: %s\n", strerror(errno));
-			return errno;
-		}
-	}
+	lprintf(LogDebug, "Switching to network namespace context %p\n", ctx);
+	int nsFd = ctx->fd;
 	int res = setns(nsFd, CLONE_NEWNET);
 	if (res != 0) {
 		lprintf(LogError, "Failed to set active network namespace: %s\n", strerror(errno));

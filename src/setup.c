@@ -45,6 +45,7 @@ int setupConfigure(const setupParams* params) {
 	globalParams = params;
 	DO_OR_RETURN(workConfigure(logThreshold(), logColorized(), params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap));
 
+	// TODO no edge nodes is ok if we are only destroying a network
 	if (params->edgeNodeCount < 1) {
 		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
 		return 1;
