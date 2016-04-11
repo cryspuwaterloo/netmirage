@@ -481,8 +481,11 @@ static int childProcess(guint id) {
 		lprintf(LogDebug, "Received order code %d\n", order.code);
 
 		// The worker must only be initialized once
-		if (initialized == (order.code == WorkerConfigure)) {
-			lprintf(LogError, "Unexpected order code %d for %s worker\n", order.code, initialized ? "initialized" : "uninitialized");
+		if (initialized && (order.code == WorkerConfigure)) {
+			lprintln(LogError, "Attempted duplicate worker initialization");
+			respondError(1);
+		} else if (!initialized && !(order.code == WorkerConfigure || order.code == WorkerPing)) {
+			lprintf(LogError, "Invalid order code for uninitialized worker: %d\n", order.code);
 			respondError(1);
 		} else {
 			int err = 0;
@@ -644,6 +647,11 @@ static void freeWorkplaceMain(WorkplaceMain* wpm) {
 
 // Called by main process => main thread
 int workInit(void) {
+	if (!workerHaveCap()) {
+		lprintln(LogError, "The process does not have the necessary capabilities for constructing the network. The process must be run as root.");
+		return 1;
+	}
+
 	workMain.poolSize = g_get_num_processors();
 	workMain.workplaces = eamalloc(workMain.poolSize, sizeof(WorkplaceMain), 0);
 	workMain.orderQueue = g_async_queue_new_full(&g_free);

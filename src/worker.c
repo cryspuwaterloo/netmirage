@@ -4,11 +4,14 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <sys/capability.h>
+#include <grp.h>
+#include <pwd.h>
+#include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -65,18 +68,17 @@ static const uint32_t OvsPriorityOut = 1 << 7;
 #define MAC_CLIENT_OTHER 2
 #define MAC_ROOT_OTHER   3
 
+bool workerHaveCap(void) {
+	// Capability checks are insufficient. The worker needs to run as UID 0
+	// (root) in order to manipulate the network namespace files.
+	return (getuid() == 0);
+}
+
 int workerInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchemaArg, uint64_t softMemCap) {
-	if (!CAP_IS_SUPPORTED(CAP_NET_ADMIN) || !CAP_IS_SUPPORTED(CAP_SYS_ADMIN)) {
-		lprintf(LogError, "The system does not support the required capabilities.");
+	if (!workerHaveCap()) {
+		lprintln(LogError, "BUG: attempted to start a worker thread with insufficient capabilities!");
 		return 1;
 	}
-
-	cap_t caps = cap_get_proc();
-	if (caps == NULL) goto restricted;
-	cap_flag_value_t capVal;
-	if (cap_get_flag(caps, CAP_NET_ADMIN, CAP_EFFECTIVE, &capVal) == -1 || capVal != CAP_SET) goto restricted;
-	if (cap_get_flag(caps, CAP_SYS_ADMIN, CAP_EFFECTIVE, &capVal) == -1 || capVal != CAP_SET) goto restricted;
-	cap_free(caps);
 
 	char* ovsVer = ovsVersion();
 	if (ovsVer == NULL) {
@@ -95,10 +97,6 @@ int workerInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchem
 	defaultNet = netOpenNamespace(NULL, false, &err);
 	if (defaultNet == NULL) return err;
 	return 0;
-restricted:
-	lprintln(LogError, "The worker process does not have authorization to perform its function. Please run the process with the CAP_NET_ADMIN and CAP_SYS_ADMIN capabilities (e.g., as root).");
-	if (caps != NULL) cap_free(caps);
-	return 1;
 }
 
 int workerCleanup(void) {

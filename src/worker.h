@@ -5,10 +5,22 @@
 // active namespace, and to isolate administrative privileges from the main I/O
 // portion of the program.
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "ip.h"
 #include "topology.h"
+
+// Checks to see if the current thread has the required capabilities to be a
+// worker thread.
+bool workerHaveCap(void);
+
+// Drops the effective capabilities of the thread to only those necessary for a
+// worker thread.
+bool workerDropCap(void);
+
+// Drops all effective capabilities of the thread.
+bool workerDropAllCap(void);
 
 // Initialize the current process as a worker process.
 int workerInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchemaArg, uint64_t softMemCap);

@@ -254,7 +254,7 @@ static bool parseSetupEmulatorOptions(GKeyFile* f, const struct argp* argp) {
 				fprintf(stderr, "In setup file: the configuration for emulator flag \"%s\" was invalid: %s\n", option->name, strerror(err));
 				return false;
 			}
-			g_free(val);
+			g_free(val); // TODO: bug
 		}
 	}
 	if (argp->children != NULL) {
@@ -344,7 +344,7 @@ int main(int argc, char** argv) {
 	struct argp_option generalOptions[] = {
 			{ "destroy",      'd', NULL,   OPTION_ARG_OPTIONAL, "If specified, any previous virtual network created by the program will be destroyed. If -f is not specified, the program terminates after deleting the network.", 0 },
 			{ "file",         'f', "FILE", 0,                   "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
-			{ "setup-file",   's', "FILE", 0,                   "The file containing setup information about edge nodes and emulator interfaces. This file is a key-value file (similar to an .ini file). Every group whose name begins with \"edge\" or \"node\" denotes the configuration for an edge node. The keys and values permitted in an edge node group are the same as those in an --edge-node argument. There may also be an \"emulator\" group. This group may contain any of the long names for command arguments. Any arguments passed on the command line override the defaults and those set in the setup file. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 0 },
+			{ "setup-file",   's', "FILE", 0,                   "The file containing setup information about edge nodes and emulator interfaces. This file is a key-value file (similar to an .ini file). Every group whose name begins with \"edge\" or \"node\" denotes the configuration for an edge node. The keys and values permitted in an edge node group are the same as those in an --edge-node argument. There may also be an \"emulator\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 0 },
 
 			{ "iface",        'i', "DEVNAME",                                     0, "Default interface connected to the edge nodes. Individual edge nodes can override this setting in the setup file or as part of the --edge-nodes argument.", 1 },
 			{ "vsubnet",      'n', "CIDR",                                        0, "The global subnet to which all virtual clients belong. By default, each edge node is given a fragment of this global subnet in which to spawn clients. Subnets for edge nodes can also be manually assigned rather than drawing them from this larger space. The default value is " DEFAULT_CLIENTS_SUBNET ".", 1 },
@@ -406,12 +406,12 @@ int main(int argc, char** argv) {
 
 	// Setup file settings have higher priority than defaults. If we are using
 	// the default setup file, we don't care if it doesn't exist.
+	argParser = &processGeneralArg;
 	bool setupSuccess = parseSetupFile(&argp, explicitSetupFile);
 	if (explicitSetupFile && !setupSuccess) goto cleanup;
 
 	// Now parse the arguments again (explicit arguments have higher priority
 	// than anything in the setup file)
-	argParser = &processGeneralArg;
 	if (argp_parse(&argp, argc, argv, 0, NULL, NULL) != 0) {
 		argp_help(&argp, stderr, ARGP_HELP_STD_USAGE, argv[0]);
 		goto cleanup;

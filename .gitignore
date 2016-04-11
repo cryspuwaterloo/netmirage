@@ -3,6 +3,9 @@ build
 bin
 src/version.c
 
+# Configuration
+setup.cfg
+
 # SCons
 .sconsign.dblite
 
