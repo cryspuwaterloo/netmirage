@@ -113,7 +113,7 @@ int workerGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemote
 
 	char ipStr[IP4_ADDR_BUFLEN];
 	ipStr[0] = '\0';
-	for (int attempt = 0; attempt < 5; ++attempt) {
+	for (int attempt = 0; attempt < 3; ++attempt) {
 		res = netGetRemoteMacAddr(defaultNet, intfName, ip, edgeRemoteMac);
 		if (res == 0) return 0;
 		if (res != EAGAIN) return res;
@@ -142,7 +142,7 @@ int workerGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemote
 		int pingStatus;
 		waitpid(pingPid, &pingStatus, 0);
 		if (!WIFEXITED(pingStatus) || WEXITSTATUS(pingStatus) != 0) {
-			lprintf(LogWarning, "Failed to ping edge node with IP %s on interface '%s'. The edge node may be unreachable. Exit code: %d\n", ipStr, intfName, WEXITSTATUS(pingStatus));
+			lprintf(LogWarning, "Failed to ping edge node with IP %s on interface '%s'. Exit code: %d\n", ipStr, intfName, WEXITSTATUS(pingStatus));
 		}
 	}
 	return 1;

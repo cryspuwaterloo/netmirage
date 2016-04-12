@@ -650,7 +650,7 @@ int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAd
 	arpr.arp_dev[IFNAMSIZ-1] = '\0';
 
 	int res = sendIoCtl(ctx, intfName, SIOCGARP, &arpr);
-	if (res == ENODEV) return EAGAIN;
+	if (res == ENODEV || res == ENXIO) return EAGAIN;
 	if (res != 0) return res;
 
 	if (arpr.arp_ha.sa_family != ARPHRD_ETHER) {

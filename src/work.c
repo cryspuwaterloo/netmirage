@@ -804,6 +804,10 @@ int workGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMa
 	err = waitForResponse(ResponseGotMac);
 	if (err == 0) {
 		memcpy(edgeRemoteMac->octets, workMain.response.gotMac.mac.octets, MAC_ADDR_BYTES);
+	} else {
+		char ipStr[IP4_ADDR_BUFLEN];
+		ip4AddrToString(ip, ipStr);
+		lprintf(LogError, "Could not find the MAC address for edge node with IP %s on interface '%s'. Ensure that the edge node is online, or manually specify the MAC address in the setup file or command arguments.\n", ipStr, intfName);
 	}
 	g_mutex_unlock(&workMain.lock);
 	return err;
