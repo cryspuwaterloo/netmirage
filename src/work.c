@@ -323,10 +323,13 @@ static int waitForResponse(WorkerResponseCode expectedCode) {
 }
 
 // Called by main process => main thread
-static int sendOrder(WorkerOrder* order) {
-	g_mutex_lock(&workMain.lock);
-	bool abort = workMain.receivedError;
-	g_mutex_unlock(&workMain.lock);
+static int sendOrder(WorkerOrder* order, bool ignoreErrors) {
+	bool abort = false;
+	if (!ignoreErrors) {
+		g_mutex_lock(&workMain.lock);
+		if (workMain.receivedError) abort = true;
+		g_mutex_unlock(&workMain.lock);
+	}
 	if (abort) return workMain.errorCode;
 
 	g_mutex_lock(&workMain.lock);
@@ -455,7 +458,7 @@ static void childLogPrint(const char* msg) {
 
 // Called by child process
 static void respondError(int code) {
-	lprintf(LogError, "Sending error code %d to parent process\n", code);
+	lprintf(LogDebug, "Sending error code %d to parent process\n", code);
 	WorkerResponse resp;
 	ZERO_RESPONSE(&resp);
 	resp.code = ResponseError;
@@ -505,7 +508,7 @@ static int childProcess(guint id) {
 				if (err == 0) {
 					initialized = true;
 				} else {
-					lprintln(LogError, "Failed to initialize worker due to malformed configuration order");
+					lprintln(LogError, "Failed to initialize worker due to configuration order");
 				}
 				break;
 			}
@@ -716,12 +719,9 @@ int workCleanup(void) {
 	int err = 0;
 	int res;
 
-	// Reset any existing error so that the send threads will accept our
-	// termination order
 	g_mutex_lock(&workMain.lock);
 	if (workMain.receivedError) {
 		err = workMain.errorCode;
-		workMain.receivedError = false;
 	}
 	g_mutex_unlock(&workMain.lock);
 
@@ -731,7 +731,7 @@ int workCleanup(void) {
 	lprintln(LogDebug, "Sending termination orders to worker threads");
 	for (guint i = 0; i < workMain.poolSize; ++i) {
 		if (!workMain.workplaces[i].established) continue;
-		res = sendOrder(newOrder(WorkerTerminate));
+		res = sendOrder(newOrder(WorkerTerminate), true);
 		if (err == 0) err = res;
 	}
 
@@ -797,7 +797,7 @@ int workGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMa
 	WorkerOrder* order = newOrder(WorkerGetEdgeRemoteMac);
 	strncpy(order->getEdgeRemoteMac.intfName, intfName, INTERFACE_BUF_LEN);
 	order->getEdgeRemoteMac.ip = ip;
-	int err = sendOrder(order);
+	int err = sendOrder(order, false);
 	if (err != 0) return err;
 
 	g_mutex_lock(&workMain.lock);
@@ -812,7 +812,7 @@ int workGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMa
 int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac) {
 	WorkerOrder* order = newOrder(WorkerGetEdgeLocalMac);
 	strncpy(order->getEdgeLocalMac.intfName, intfName, INTERFACE_BUF_LEN);
-	int err = sendOrder(order);
+	int err = sendOrder(order, false);
 	if (err != 0) return err;
 
 	g_mutex_lock(&workMain.lock);
@@ -835,7 +835,7 @@ int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther) {
 	createOrder->addRoot.existing = false;
 
 	// First, instruct any one worker to create the root namespace
-	int err = sendOrder(createOrder);
+	int err = sendOrder(createOrder, false);
 	if (err != 0) return err;
 
 	err = workJoin(false);
@@ -850,7 +850,7 @@ int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther) {
 int workAddEdgeInterface(const char* intfName, uint32_t* portId) {
 	WorkerOrder* order = newOrder(WorkerAddEdgeInterface);
 	strncpy(order->addEdgeInterface.intfName, intfName, INTERFACE_BUF_LEN);
-	int err = sendOrder(order);
+	int err = sendOrder(order, false);
 	if (err != 0) return err;
 
 	g_mutex_lock(&workMain.lock);
@@ -872,14 +872,14 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 		}
 	}
 	order->addHost.node = *node;
-	return sendOrder(order);
+	return sendOrder(order, false);
 }
 
 int workSetSelfLink(nodeId id, const TopoLink* link) {
 	WorkerOrder* order = newOrder(WorkerSetSelfLink);
 	order->setSelfLink.id = id;
 	order->setSelfLink.link = *link;
-	return sendOrder(order);
+	return sendOrder(order, false);
 }
 
 int workEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clientNodes) {
@@ -887,7 +887,7 @@ int workEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clientN
 	order->ensureSystemScaling.linkCount = linkCount;
 	order->ensureSystemScaling.nodeCount = nodeCount;
 	order->ensureSystemScaling.clientNodes = clientNodes;
-	return sendOrder(order);
+	return sendOrder(order, false);
 }
 
 int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link) {
@@ -900,7 +900,7 @@ int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targ
 		memcpy(order->addLink.macs[i].octets, macs[i].octets, MAC_ADDR_BYTES);
 	}
 	order->addLink.link = *link;
-	return sendOrder(order);
+	return sendOrder(order, false);
 }
 
 int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, const ip4Subnet* subnet1, const ip4Subnet* subnet2) {
@@ -911,7 +911,7 @@ int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, cons
 	order->addInternalRoutes.ip2 = ip2;
 	order->addInternalRoutes.subnet1 = *subnet1;
 	order->addInternalRoutes.subnet2 = *subnet2;
-	return sendOrder(order);
+	return sendOrder(order, false);
 }
 
 int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort) {
@@ -922,7 +922,7 @@ int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* 
 	}
 	order->addClientRoutes.subnet = *subnet;
 	order->addClientRoutes.edgePort = edgePort;
-	return sendOrder(order);
+	return sendOrder(order, false);
 }
 
 int workAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const macAddr* edgeLocalMac, const macAddr* edgeRemoteMac) {
@@ -931,9 +931,9 @@ int workAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const macA
 	order->addEdgeRoutes.edgePort = edgePort;
 	memcpy(order->addEdgeRoutes.edgeLocalMac.octets, edgeLocalMac->octets, MAC_ADDR_BYTES);
 	memcpy(order->addEdgeRoutes.edgeRemoteMac.octets, edgeRemoteMac->octets, MAC_ADDR_BYTES);
-	return sendOrder(order);
+	return sendOrder(order, false);
 }
 
 int workDestroyHosts(void) {
-	return sendOrder(newOrder(WorkerDestroyHosts));
+	return sendOrder(newOrder(WorkerDestroyHosts), false);
 }

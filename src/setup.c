@@ -44,6 +44,7 @@ int setupInit(void) {
 int setupConfigure(const setupParams* params) {
 	globalParams = params;
 	DO_OR_RETURN(workConfigure(logThreshold(), logColorized(), params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap));
+	DO_OR_RETURN(workJoin(false));
 
 	// TODO no edge nodes is ok if we are only destroying a network
 	if (params->edgeNodeCount < 1) {
