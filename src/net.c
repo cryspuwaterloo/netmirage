@@ -593,11 +593,11 @@ static void initIfReq(struct ifreq* ifr) {
 #endif
 }
 
-static int sendIoCtl(netContext* ctx, const char* name, unsigned long command, void* req) {
+static int sendIoCtl(netContext* ctx, bool quiet, const char* name, unsigned long command, void* req) {
 	errno = 0;
 	int res = ioctl(ctx->ioctlFd, command, req);
 	if (res == -1) {
-		lprintf(LogError, "Error for ioctl command %d on interface %p:'%s': %s\n", command, ctx, name, strerror(errno));
+		lprintf(quiet ? LogDebug : LogError, "Error for ioctl command %d on interface %p:'%s': %s\n", command, ctx, name, strerror(errno));
 		return errno;
 	}
 	return 0;
@@ -614,7 +614,7 @@ static int sendIoCtlIfReq(netContext* ctx, const char* name, unsigned long comma
 	ifr->ifr_name[IFNAMSIZ-1] = '\0';
 	ifr->ifr_data = data;
 
-	return sendIoCtl(ctx, name, command, ifr);
+	return sendIoCtl(ctx, false, name, command, ifr);
 }
 
 int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
@@ -697,7 +697,7 @@ int netSetInterfaceUp(netContext* ctx, const char* name, bool up) {
 	if (up) ifr.ifr_flags |= IFF_UP;
 	else ifr.ifr_flags &= ~IFF_UP;
 
-	res = sendIoCtl(ctx, name, SIOCSIFFLAGS, &ifr);
+	res = sendIoCtl(ctx, false, name, SIOCSIFFLAGS, &ifr);
 	if (res != 0) return res;
 
 	return 0;
@@ -798,7 +798,7 @@ int netAddStaticArp(netContext* ctx, const char* intfName, ip4Addr ip, const mac
 		lprintf(LogDebug, "Adding static ARP entry for interface %p:'%s': %s => %s\n", ctx, intfName, ipStr, macStr);
 	}
 
-	return sendIoCtl(ctx, intfName, SIOCSARP, &arpr);
+	return sendIoCtl(ctx, false, intfName, SIOCSARP, &arpr);
 }
 
 int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAddr* result) {
@@ -814,7 +814,7 @@ int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAd
 	strncpy(arpr.arp_dev, intfName, IFNAMSIZ);
 	arpr.arp_dev[IFNAMSIZ-1] = '\0';
 
-	int res = sendIoCtl(ctx, intfName, SIOCGARP, &arpr);
+	int res = sendIoCtl(ctx, true, intfName, SIOCGARP, &arpr);
 	if (res == ENODEV || res == ENXIO) return EAGAIN;
 	if (res != 0) return res;
 

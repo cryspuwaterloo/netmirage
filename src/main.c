@@ -60,7 +60,6 @@ static long matchArg(const char* arg, const char* options[], struct argp_state* 
 
 // Argument data recovered by argp
 static struct {
-	bool cleanup;
 	const char* setupFile;
 
 	size_t edgeNodeCap; // Buffer length is stored in the setupParams
@@ -134,7 +133,7 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 	}
 
 	switch (key) {
-	case 'd': args.cleanup = true; break;
+	case 'd': args.params.destroyFirst = true; break;
 	case 'f': args.params.srcFile = argCopy; break;
 	case 'r': args.params.ovsDir = argCopy; break;
 	case 'a': args.params.ovsSchema = argCopy; break;
@@ -393,11 +392,11 @@ int main(int argc, char** argv) {
 	struct argp argp = { generalOptions, &processArg, NULL, "Sets up virtual networking infrastructure for a NetMirage core node.", children };
 
 	// Default arguments
-	args.cleanup = false;
 	args.verbosity = LogWarning;
 	args.params.nsPrefix = "nm-";
 	args.params.ovsDir = DEFAULT_OVS_DIR;
 	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
+	args.params.destroyFirst = false;
 	ip4GetSubnet(DEFAULT_CLIENTS_SUBNET, &args.params.edgeNodeDefaults.globalVSubnet);
 	args.gmlParams.bandwidthDivisor = ShadowDivisor;
 	args.gmlParams.weightKey = "latency";
@@ -441,19 +440,10 @@ int main(int argc, char** argv) {
 
 	lprintf(LogInfo, "Starting %s\n", getVersionString());
 
-	if (!args.cleanup && args.params.edgeNodeCount < 1) {
-		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
-		goto cleanup;
-	}
-
 	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;
 
-	if (args.cleanup) {
-		err = destroyNetwork();
-	}
-
-	if (err == 0 && (!args.cleanup || args.params.srcFile != NULL)) {
+	if (err == 0 && (!args.params.destroyFirst || args.params.srcFile != NULL)) {
 		lprintln(LogInfo, "Beginning network construction");
 		err = setupGraphML(&args.gmlParams);
 	}

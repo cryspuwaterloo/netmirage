@@ -27,6 +27,8 @@ typedef struct {
 	const char* ovsDir;    // Directory for Open vSwitch files
 	const char* ovsSchema; // Path to Open vSwitch's OVSDB schema
 
+	bool destroyFirst;
+
 	// srcFile is the path to a file containing the network topology in the
 	// appropriate format. If it is NULL, then stdin is used instead.
 	const char* srcFile;
