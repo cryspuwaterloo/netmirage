@@ -178,14 +178,14 @@ typedef struct {
 	char* logBuffer;
 	size_t logLen;
 	size_t logCap;
-} WorkplaceMain; // TODO rename if no WorkplaceChild
+} Workplace;
 
 // Module state for the main process
 static struct {
 	GMutex lock;
 
 	guint poolSize;
-	WorkplaceMain* workplaces;
+	Workplace* workplaces;
 
 	// State for handling outgoing orders:
 
@@ -257,7 +257,7 @@ static void freeOrderContents(WorkerOrder* order) {
 }
 
 // Serializes a work order and sends it through the pipe to a child process
-static bool writeOrderToWorkplace(WorkerOrder* order, WorkplaceMain* wp) {
+static bool writeOrderToWorkplace(WorkerOrder* order, Workplace* wp) {
 	lprintf(LogDebug, "Sending order code %d to child in workplace %p\n", order->code, wp);
 	if (!writeAll(wp->ordersFd, order, sizeof(WorkerOrder))) goto fail;
 
@@ -350,7 +350,7 @@ static bool broadcastOrder(WorkerOrder* order) {
 	// Send the order directly to each child process
 	bool success = true;
 	for (guint i = 0; i < workMain.poolSize; ++i) {
-		WorkplaceMain* wp = &workMain.workplaces[i];
+		Workplace* wp = &workMain.workplaces[i];
 		if (!writeOrderToWorkplace(order, wp)) {
 			lprintf(LogWarning, "Could not broadcast configuration order to child in workplace %p\n", wp);
 			success = false;
@@ -361,7 +361,7 @@ static bool broadcastOrder(WorkerOrder* order) {
 
 // The entry point for the send threads in the main process
 static void* sendThread(gpointer data) {
-	WorkplaceMain* wp = data;
+	Workplace* wp = data;
 
 	bool loop = true;
 	while (loop) {
@@ -388,7 +388,7 @@ static void* sendThread(gpointer data) {
 
 // The entry point for the response threads in the main process
 static void* responseThread(gpointer data) {
-	WorkplaceMain* wp = data;
+	Workplace* wp = data;
 
 	while (true) {
 		WorkerResponse resp;
@@ -583,7 +583,7 @@ static int childProcess(guint id) {
 }
 
 // Called by main process => main thread
-static bool initWorkplaceMainForks(WorkplaceMain* wpm, guint id) {
+static bool initWorkplaceMainForks(Workplace* wpm, guint id) {
 	int pipefd[2];
 
 	flexBufferInit((void**)&wpm->logBuffer, &wpm->logLen, &wpm->logCap);
@@ -600,7 +600,7 @@ static bool initWorkplaceMainForks(WorkplaceMain* wpm, guint id) {
 	if (pid == 0) { // Child process
 		// Close all file descriptors meant for the main process
 		for (guint i = 0; i < workMain.poolSize; ++i) {
-			WorkplaceMain* otherWpm = &workMain.workplaces[i];
+			Workplace* otherWpm = &workMain.workplaces[i];
 			if (!otherWpm->established && otherWpm != wpm) continue;
 			close(otherWpm->ordersFd);
 			close(otherWpm->responsesFd);
@@ -637,14 +637,14 @@ pipeAbort:
 }
 
 // Called by main process => main thread
-static void initWorkplaceMainThreads(WorkplaceMain* wp) {
+static void initWorkplaceMainThreads(Workplace* wp) {
 	lprintf(LogDebug, "Launching worker threads for workplace %p\n", wp);
 	wp->sendThread = g_thread_new("SendThread", &sendThread, wp);
 	wp->responseThread = g_thread_new("ResponseThread", &responseThread, wp);
 }
 
 // Called by main process => main thread
-static void freeWorkplaceMain(WorkplaceMain* wpm) {
+static void freeWorkplaceMain(Workplace* wpm) {
 	flexBufferFree((void**)&wpm->logBuffer, &wpm->logLen, &wpm->logCap);
 }
 
@@ -656,7 +656,7 @@ int workInit(void) {
 	}
 
 	workMain.poolSize = g_get_num_processors();
-	workMain.workplaces = eamalloc(workMain.poolSize, sizeof(WorkplaceMain), 0);
+	workMain.workplaces = eamalloc(workMain.poolSize, sizeof(Workplace), 0);
 	workMain.orderQueue = g_async_queue_new_full(&g_free);
 	workMain.unsentOrders = 0;
 	workMain.responseQueued = false;
