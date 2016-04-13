@@ -26,4 +26,4 @@ void ncFreeCache(netCache* cache);
 // namespace is released and discarded from the cache. excl and err have the
 // same meaning as for netOpenNamespace. The active namespace for the process is
 // set to the given namespace.
-netContext* ncOpenNamespace(netCache* cache, nodeId id, const char* name, bool excl, int* err);
+netContext* ncOpenNamespace(netCache* cache, nodeId id, const char* name, bool create, bool excl, int* err);

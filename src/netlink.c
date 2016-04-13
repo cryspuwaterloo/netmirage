@@ -220,8 +220,9 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 	struct sockaddr_nl fromAddr = { AF_NETLINK, 0, 0, 0 };
 	ctx->msg.msg_name = &fromAddr;
 
-	bool foundResponse = false;
-	while (!foundResponse) {
+	bool keepReading = true;
+	bool multiPartResponse = false;
+	while (keepReading) {
 		errno = 0;
 		ssize_t res = recvmsg(ctx->sock, &ctx->msg, 0);
 		if (res < 0) {
@@ -243,13 +244,15 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 		}
 
 		for (struct nlmsghdr* nlm = msgBuffer.data; NLMSG_OK(nlm, res); nlm = NLMSG_NEXT(nlm, res)) {
-			if (nlm->nlmsg_type == NLMSG_DONE) break;
+			if (nlm->nlmsg_type == NLMSG_NOOP) continue;
 			if (nlm->nlmsg_seq != seq) {
 				// We ignore responses to previous messages, since we were not
 				// interested in the errors when the calls were made
 				continue;
 			}
-			foundResponse = true;
+
+			// This message is targeted at us. Process it.
+
 			if (nlm->nlmsg_type == NLMSG_ERROR) {
 				struct nlmsgerr* nlerr = NLMSG_DATA(nlm);
 				if (nlerr->error != 0) {
@@ -260,7 +263,19 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 					return -nlerr->error;
 				}
 			}
-			if (handler != NULL) {
+
+			if ((nlm->nlmsg_flags & NLM_F_MULTI) == 0) {
+				keepReading = false;
+			} else {
+				if (!multiPartResponse) {
+					lprintf(LogDebug, "Netlink socket %p received multi-part message\n", ctx);
+					multiPartResponse = true;
+				}
+			}
+
+			if (multiPartResponse && nlm->nlmsg_type == NLMSG_DONE) {
+				keepReading = false;
+			} else if (handler != NULL) {
 				int userError = handler(ctx, NLMSG_DATA(nlm), NLMSG_PAYLOAD(nlm, 0), nlm->nlmsg_type, nlm->nlmsg_flags, arg);
 				if (userError != 0) return userError;
 			}

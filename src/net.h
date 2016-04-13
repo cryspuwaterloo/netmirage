@@ -27,21 +27,22 @@ int netInit(const char* namespacePrefix);
 // Frees all resources associated with the net subsystem
 void netCleanup(void);
 
-// Opens a namespace with the given name. If the namespace does not exist, it is
-// first created. If it already exists and excl is true, an error is raised.
-// Namespaces created this way are visible to iproute2. If name is NULL, then
-// the context is opened for the default namespace. Automatically switches to
-// the namespace when called. Returns a context for the new namespace on
+// Opens a namespace with the given name. If the namespace does not exist, and
+// create is true, it is first created. If it does not exist and create is
+// false, an error is raised. If it already exists and excl is true, an error is
+// raised. Namespaces created this way are visible to iproute2. If name is NULL,
+// then the context is opened for the default namespace. Automatically switches
+// to the namespace when called. Returns a context for the new namespace on
 // success, or NULL on error. If err is not NULL, it is set to the error code on
 // error. If an error occurs, the active namespace may no longer be valid.
-netContext* netOpenNamespace(const char* name, bool excl, int* err);
+netContext* netOpenNamespace(const char* name, bool create, bool excl, int* err);
 
 // Opens a namespace using existing storage space. If reusing is false, then the
 // space is completely initialized. If reusing is true, then the context must
 // have been previously created with netOpenNamespace and subsequently
 // invalidated with netInvalidateContext. On success, this function has the same
 // effects as netOpenNamespace. Returns 0 on success or an error code otherwise.
-int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, bool excl);
+int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, bool create, bool excl);
 
 // Invalidates a context so that its memory can be reused to create a new one.
 void netInvalidateContext(netContext* ctx);
@@ -56,15 +57,20 @@ void netCloseNamespace(netContext* ctx, bool inPlace);
 int netDeleteNamespace(const char* name);
 
 // Enumerates all of the namespaces on the system matching the prefix. If
-// nsCallback returns a non-zero value, enumation is terminated and the value is
+// callback returns a non-zero value, enumeration is terminated and the value is
 // returned to the caller. Returns 0 on success.
 typedef int (*netNsCallback)(const char* name, void* userData);
 int netEnumNamespaces(netNsCallback callback, void* userData);
 
-// Switches the active namespace for the process. If the context is NULL,
-// switches to the default network namespace for the PID namespace. Returns 0
-// on success or an error code otherwise.
+// Switches the active namespace for the process. Returns 0 on success or an
+// error code otherwise.
 int netSwitchNamespace(netContext* ctx);
+
+// Enumerates all of the network interfaces in the given namespace. If
+// callback returns a non-zero value, enumeration is terminated and the value
+// is returned to the caller. Returns 0 on success.
+typedef int (*netIfCallback)(const char* intfName, int idx, void* userData);
+int netEnumInterfaces(netIfCallback callback, netContext* ctx, void* userData);
 
 // Creates a virtual Ethernet pair of interfaces with endpoints in the given
 // namespaces. If the MAC addresses are not NULL, they are used to configure the
@@ -77,7 +83,7 @@ int netGetInterfaceIndex(netContext* ctx, const char* name, int* err);
 
 // Moves an interface from one namespace to another. Returns 0 on success or an
 // error code otherwise.
-int netMoveInterface(netContext* srcCtx, int devIdx, netContext* dstCtx, bool sync);
+int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx);
 
 // Adds an IPv4 address to an interface. subnetBits specifies the prefix length
 // of the subnet. Returns 0 on success or an error code otherwise.

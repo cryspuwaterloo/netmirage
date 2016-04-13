@@ -64,7 +64,7 @@ void ncFreeCache(netCache* cache) {
 	free(cache);
 }
 
-netContext* ncOpenNamespace(netCache* cache, nodeId id, const char* name, bool excl, int* err) {
+netContext* ncOpenNamespace(netCache* cache, nodeId id, const char* name, bool create, bool excl, int* err) {
 	gpointer key = ncMakeKey(id);
 	gpointer val = g_hash_table_lookup(cache->map, key);
 	if (val != NULL) { // Found in hash table
@@ -92,7 +92,7 @@ netContext* ncOpenNamespace(netCache* cache, nodeId id, const char* name, bool e
 	node->key = key;
 	node->newer = NULL;
 
-	int res = netOpenNamespaceInPlace(&node->ctx, reusing, name, excl);
+	int res = netOpenNamespaceInPlace(&node->ctx, reusing, name, create, excl);
 	if (res != 0) {
 		free(node);
 		if (err != NULL) *err = res;

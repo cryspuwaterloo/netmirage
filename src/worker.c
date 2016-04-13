@@ -18,6 +18,7 @@
 
 #include "ip.h"
 #include "log.h"
+#include "mem.h"
 #include "net.h"
 #include "netcache.h"
 #include "ovs.h"
@@ -94,8 +95,9 @@ int workerInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchem
 	nc = ncNewCache(softMemCap);
 	int err = netInit(nsPrefix);
 	if (err != 0) return err;
-	defaultNet = netOpenNamespace(NULL, false, &err);
+	defaultNet = netOpenNamespace(NULL, false, false, &err);
 	if (defaultNet == NULL) return err;
+
 	return 0;
 }
 
@@ -217,7 +219,7 @@ int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool existing) {
 	lprintf(LogDebug, "Creating a private 'root' namespace\n");
 
 	int err = 0;
-	rootNet = netOpenNamespace(RootName, !existing, &err);
+	rootNet = netOpenNamespace(RootName, !existing, !existing, &err);
 	if (rootNet == NULL) return err;
 
 	if (!existing) {
@@ -253,7 +255,10 @@ int workerAddEdgeInterface(const char* intfName, uint32_t* portId) {
 	int intfIdx = netGetInterfaceIndex(defaultNet, intfName, &err);
 	if (intfIdx == -1) return err;
 
-	err = netMoveInterface(defaultNet, intfIdx, rootNet, true);
+	err = netMoveInterface(defaultNet, intfName, intfIdx, rootNet);
+	if (err != 0) return err;
+
+	err = netSetInterfaceUp(rootNet, intfName, true);
 	if (err != 0) return err;
 
 	err = ovsAddPort(rootSwitch, RootBridgeName, intfName, portId);
@@ -277,7 +282,7 @@ int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 	lprintf(LogDebug, "Creating host %s\n", nodeName);
 
 	int err;
-	netContext* net = ncOpenNamespace(nc, id, nodeName, true, &err);
+	netContext* net = ncOpenNamespace(nc, id, nodeName, true, true, &err);
 	if (net == NULL) return err;
 
 	err = applyNamespaceParams();
@@ -321,7 +326,7 @@ int workerSetSelfLink(nodeId id, const TopoLink* link) {
 	lprintf(LogDebug, "Applying self traffic shaping to client host %s\n", nodeName);
 
 	int err;
-	netContext* net = ncOpenNamespace(nc, id, nodeName, false, &err);
+	netContext* net = ncOpenNamespace(nc, id, nodeName, false, false, &err);
 	if (net == NULL) return err;
 
 	int intfIdx = netGetInterfaceIndex(net, SelfLinkPrefix, &err);
@@ -336,9 +341,9 @@ static int workGetLinkEndpoints(nodeId id1, nodeId id2, char* name1, char* name2
 	idToNsName(id2, name2);
 
 	int err;
-	*net1 = ncOpenNamespace(nc, id1, name1, false, &err);
+	*net1 = ncOpenNamespace(nc, id1, name1, false, false, &err);
 	if (*net1 == NULL) return err;
-	*net2 = ncOpenNamespace(nc, id2, name2, false, &err);
+	*net2 = ncOpenNamespace(nc, id2, name2, false, false, &err);
 	if (*net2 == NULL) return err;
 
 	sprintf(intf1, "%s-%u", NodeLinkPrefix, id2);
@@ -478,7 +483,7 @@ int workerAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet
 	idToNsName(clientId, name);
 
 	int err;
-	netContext* net = ncOpenNamespace(nc, clientId, name, false, &err);
+	netContext* net = ncOpenNamespace(nc, clientId, name, false, false, &err);
 	if (net == NULL) return err;
 
 	int downIdx = netGetInterfaceIndex(net, RootLinkPrefix, &err);
@@ -542,6 +547,33 @@ int workerAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const ma
 	return ovsAddIpFlow(rootSwitch, RootBridgeName, 0, NULL, edgeSubnet, edgeLocalMac, edgeRemoteMac, edgePort, OvsPriorityOut);
 }
 
+typedef struct workerMoveIntfDirective_s {
+	int idx;
+	char name[INTERFACE_BUF_LEN+1];
+	struct workerMoveIntfDirective_s* next;
+} workerMoveIntfDirective;
+
+static int workerRestoreInterface(const char* name, int idx, void* userData) {
+	// Ignore any interfaces that we may have created
+	if (strcmp(name, "lo") == 0) return 0;
+	if (strcmp(name, RootBridgeName) == 0) return 0;
+	if (strncmp(name, "ovs-", 4) == 0) return 0;
+	if (strncmp(name, SelfLinkPrefix, strlen(SelfLinkPrefix)) == 0 && name[strlen(SelfLinkPrefix)] == '-') return 0;
+	if (strncmp(name, NodeLinkPrefix, strlen(NodeLinkPrefix)) == 0 && name[strlen(NodeLinkPrefix)] == '-') return 0;
+
+	// We cannot perform the move within the callback because this would result
+	// in nested netlink calls. Instead, we save a linked list of interfaces to
+	// move.
+	workerMoveIntfDirective** intfToMove = userData;
+	workerMoveIntfDirective* node = emalloc(sizeof(workerMoveIntfDirective));
+	node->idx = idx;
+	strncpy(node->name, name, INTERFACE_BUF_LEN);
+	node->name[INTERFACE_BUF_LEN] = '\0';
+	node->next = *intfToMove;
+	*intfToMove = node;
+	return 0;
+}
+
 static int workerDestroyNamespace(const char* name, void* userData) {
 	uint32_t* deletedHosts = userData;
 	if (deletedHosts != NULL) ++*deletedHosts;
@@ -550,6 +582,35 @@ static int workerDestroyNamespace(const char* name, void* userData) {
 
 int workerDestroyHosts(void) {
 	ovsDestroy(ovsDir);
+
+	// We need to manually move external interfaces out of the root namespace.
+	// While the kernel will do this automatically when the namespace is
+	// deleted, this will cause all interface properties (e.g., IP addresses) to
+	// be lost. Our function preserves these properties for convenience. We can
+	// identify the root namespace without using the namespace prefix because we
+	// ensure that the naming of the root cannot possible conflict with the
+	// naming of node namespaces.
+	netContext* ctx = netOpenNamespace(RootName, false, false, NULL);
+	if (ctx != NULL) {
+		workerMoveIntfDirective* intfToMove = NULL;
+		int err = netEnumInterfaces(&workerRestoreInterface, ctx, &intfToMove);
+		if (err != 0) {
+			lprintf(LogWarning, "An error occurred while listing the interfaces for the previously created root network namespace. You may need to reconfigure physical network interfaces to restore edge node connectivity. Error code: %d\n", err);
+		} else {
+			while (intfToMove != NULL) {
+				lprintf(LogDebug, "Restoring %p:'%s' (index %d) to default namespace\n", ctx, intfToMove->name, intfToMove->idx);
+				if (netMoveInterface(ctx, intfToMove->name, intfToMove->idx, defaultNet) != 0) {
+					lprintf(LogWarning, "Failed to restore interface '%s' to the default network namespace. You may need to reconfigure the interface's IP address so that edge nodes can be reached.\n", intfToMove->name);
+				}
+
+				workerMoveIntfDirective* prev = intfToMove;
+				intfToMove = intfToMove->next;
+				free(prev);
+			}
+		}
+		netCloseNamespace(ctx, false);
+	}
+
 	uint32_t deletedHosts = 0;
 	int res = netEnumNamespaces(&workerDestroyNamespace, &deletedHosts);
 	if (deletedHosts > 0) {

@@ -46,12 +46,6 @@ int setupConfigure(const setupParams* params) {
 	DO_OR_RETURN(workConfigure(logThreshold(), logColorized(), params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap));
 	DO_OR_RETURN(workJoin(false));
 
-	// TODO no edge nodes is ok if we are only destroying a network
-	if (params->edgeNodeCount < 1) {
-		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
-		return 1;
-	}
-
 	// Complete definitions for edge nodes by filling in default / missing data
 	size_t edgeSubnetsNeeded = 0;
 	for (size_t i = 0; i < params->edgeNodeCount; ++i) {
@@ -103,7 +97,6 @@ int setupConfigure(const setupParams* params) {
 
 	// TODO scan for subnet overlaps
 
-	// Make sure that we have at least one bit to flip in the IP addresses
 	for (size_t i = 0; i < params->edgeNodeCount; ++i) {
 		edgeNodeParams* edge = &params->edgeNodes[i];
 		char ip[IP4_ADDR_BUFLEN];

@@ -441,6 +441,11 @@ int main(int argc, char** argv) {
 
 	lprintf(LogInfo, "Starting %s\n", getVersionString());
 
+	if (!args.cleanup && args.params.edgeNodeCount < 1) {
+		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
+		goto cleanup;
+	}
+
 	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;
 

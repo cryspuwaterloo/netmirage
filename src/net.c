@@ -155,9 +155,9 @@ static int getNamespacePath(char* buffer, const char* name) {
 
 // This implementation is meant to be compatible with the "ip netns add"
 // command.
-netContext* netOpenNamespace(const char* name, bool excl, int* err) {
+netContext* netOpenNamespace(const char* name, bool create, bool excl, int* err) {
 	netContext* ctx = emalloc(sizeof(netContext));
-	int res = netOpenNamespaceInPlace(ctx, false, name, excl);
+	int res = netOpenNamespaceInPlace(ctx, false, name, create, excl);
 	if (res == 0) return ctx;
 
 	free(ctx);
@@ -165,7 +165,7 @@ netContext* netOpenNamespace(const char* name, bool excl, int* err) {
 	return NULL;
 }
 
-int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, bool excl) {
+int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, bool create, bool excl) {
 	int err;
 
 	const char* netNsPath;
@@ -178,13 +178,17 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 		netNsPath = pathBuffer;
 	}
 
-	bool mustSwitch = !excl;
+	bool mustSwitch = true;
 	int nsFd;
 	while (true) {
 		if (!excl) {
 			errno = 0;
 			nsFd = open(netNsPath, O_RDONLY | O_CLOEXEC, 0);
 			if (nsFd != -1) break;
+		}
+		if (!create) {
+			lprintf(LogDebug, "Namespace file '%s' does not exist and was not created\n", netNsPath);
+			return 1;
 		}
 
 		nsFd = open(netNsPath, O_RDONLY | O_CLOEXEC | O_CREAT | (excl ? O_EXCL : 0), S_IRUSR | S_IRGRP | S_IROTH);
@@ -326,33 +330,194 @@ int netEnumNamespaces(netNsCallback callback, void* userData) {
 }
 
 int netSwitchNamespace(netContext* ctx) {
-	errno = 0;
 	lprintf(LogDebug, "Switching to network namespace context %p\n", ctx);
 	int nsFd = ctx->fd;
+	errno = 0;
 	int res = setns(nsFd, CLONE_NEWNET);
 	if (res != 0) {
 		lprintf(LogError, "Failed to set active network namespace: %s\n", strerror(errno));
 		return errno;
 	}
-	if (ctx == NULL) close(nsFd);
 	return 0;
 }
 
-int netMoveInterface(netContext* srcCtx, int devIdx, netContext* dstCtx, bool sync) {
+typedef struct {
+	netContext* netCtx;
+	netIfCallback callback;
+	void* userData;
+} netEnumIntfContext;
+
+static int netSendLinkCallback(const nlContext* ctx, const void* data, uint32_t len, uint16_t type, uint16_t flags, void* arg) {
+	netEnumIntfContext* enumCtx = arg;
+	const struct ifinfomsg* ifi = data;
+	int idx = ifi->ifi_index;
+
+	const char* intfName = NULL;
+	const struct rtattr* rta = (const struct rtattr*)((const char*)data + NLMSG_ALIGN(sizeof(struct ifinfomsg)));
+	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+		if (rta->rta_type == IFLA_IFNAME) {
+			intfName = RTA_DATA(rta);
+			break;
+		}
+	}
+	if (intfName == NULL) {
+		lprintf(LogWarning, "Interface enumeration ignored nameless interface %p:%d\n", enumCtx->netCtx, idx);
+	} else {
+		return enumCtx->callback(intfName, idx, enumCtx->userData);
+	}
+	return 0;
+}
+
+int netEnumInterfaces(netIfCallback callback, netContext* ctx, void* userData) {
+	nlContext* nl = &ctx->nl;
+
+	// Get link attributes
+	netEnumIntfContext enumCtx = { .netCtx = ctx, .callback = callback, .userData = userData };
+	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_index = 0, .ifi_type = 0, .ifi_flags = 0, .ifi_change = UINT_MAX };
+	nlInitMessage(nl, RTM_GETLINK, NLM_F_ACK | NLM_F_ROOT);
+	nlBufferAppend(nl, &ifi, sizeof(ifi));
+	return nlSendMessage(nl, true, &netSendLinkCallback, &enumCtx);
+}
+
+typedef struct {
+	bool ifi;
+	int findIndex;
+	union {
+		struct ifinfomsg ifi;
+		struct ifaddrmsg ifa;
+	} msg;
+	void* rtAttrs;
+	size_t rtAttrSize;
+} netAttrBuffer;
+
+static int netParseLinkInfo(const nlContext* ctx, const void* data, uint32_t len, uint16_t type, uint16_t flags, void* arg) {
+	netAttrBuffer* attrs = arg;
+	size_t headerSize;
+	int thisIndex;
+	if (attrs->ifi) {
+		headerSize = sizeof(struct ifinfomsg);
+		thisIndex = ((const struct ifinfomsg*)data)->ifi_index;
+	} else {
+		headerSize = sizeof(struct ifaddrmsg);
+		thisIndex = (int)((const struct ifaddrmsg*)data)->ifa_index;
+	}
+
+	// rtNetlink will return multiple results. We need to filter in userspace.
+	if (thisIndex != attrs->findIndex) return 0;
+
+	memcpy(&attrs->msg, data, headerSize);
+
+	headerSize = NLMSG_ALIGN(headerSize);
+
+	size_t rtAttrCap = 0;
+	if (attrs->rtAttrs != NULL) flexBufferFree(&attrs->rtAttrs, &attrs->rtAttrSize, &rtAttrCap);
+	flexBufferInit(&attrs->rtAttrs, &attrs->rtAttrSize, &rtAttrCap);
+
+	for (const struct rtattr* rta = (const struct rtattr*)((const char*)data + headerSize); RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+		bool keepAttr = true;
+		if (attrs->ifi) {
+			switch (rta->rta_type) {
+			case IFLA_ADDRESS: break;
+			case IFLA_BROADCAST: break;
+			default:
+				keepAttr = false;
+			}
+		} else {
+			switch (rta->rta_type) {
+			case IFA_ADDRESS: break;
+			case IFA_LOCAL: break;
+			case IFA_BROADCAST: break;
+			case IFA_ANYCAST: break;
+			case IFA_CACHEINFO: break;
+			default:
+				keepAttr = false;
+			}
+		}
+		if (keepAttr) {
+			size_t attrLen = RTA_SPACE(RTA_PAYLOAD(rta));
+			flexBufferGrow(&attrs->rtAttrs, attrs->rtAttrSize, &rtAttrCap, attrLen, 1);
+			flexBufferAppend(attrs->rtAttrs, &attrs->rtAttrSize, rta, attrLen, 1);
+		}
+	}
+	return 0;
+}
+
+int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx) {
 	lprintf(LogDebug, "Moving interface %p:%d to context %p\n", srcCtx, devIdx, dstCtx);
 
-	nlContext* nl = &srcCtx->nl;
-	nlInitMessage(nl, RTM_NEWLINK, (sync ? NLM_F_ACK : 0));
+	// If the interface is simply moved using RTM_NEWLINK, which is what
+	// iproute2 does with "ip link set <dev> netns <ns>", then all of the
+	// attached configuration is dropped. We want to preserve this information.
+	// To do so, we first perform requests for the configuration data and store
+	// all attached rtattrs. We then replay these rtattrs after the RTM_NEWLINK
+	// call.
+
+	nlContext* srcNl = &srcCtx->nl;
+	nlContext* dstNl = &dstCtx->nl;
+	int err;
+
+	netAttrBuffer linkAttrs = { .ifi = true, .findIndex = devIdx, .rtAttrs = NULL, .rtAttrSize = 0 };
+	netAttrBuffer addrAttrs = { .ifi = false, .findIndex = devIdx, .rtAttrs = NULL, .rtAttrSize = 0 };
 
 	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_type = 0, .ifi_flags = 0, .ifi_change = UINT_MAX };
+	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
+
+	// Get link attributes
 	ifi.ifi_index = devIdx;
-	nlBufferAppend(nl, &ifi, sizeof(ifi));
+	nlInitMessage(srcNl, RTM_GETLINK, NLM_F_ACK | NLM_F_ROOT);
+	nlBufferAppend(srcNl, &ifi, sizeof(ifi));
+	err = nlSendMessage(srcNl, true, &netParseLinkInfo, &linkAttrs);
+	if (err != 0) goto cleanup;
 
-	nlPushAttr(nl, IFLA_NET_NS_FD);
-		nlBufferAppend(nl, &dstCtx->fd, sizeof(dstCtx->fd));
-	nlPopAttr(nl);
+	// Get link addresses
+	ifa.ifa_index = (unsigned int)devIdx;
+	nlInitMessage(srcNl, RTM_GETADDR, NLM_F_ACK | NLM_F_ROOT);
+	nlBufferAppend(srcNl, &ifa, sizeof(ifa));
+	err = nlSendMessage(srcNl, true, &netParseLinkInfo, &addrAttrs);
+	if (err != 0) goto cleanup;
 
-	return nlSendMessage(nl, sync, NULL, NULL);
+	// Move link to new namespace
+	nlInitMessage(srcNl, RTM_NEWLINK, NLM_F_ACK);
+	nlBufferAppend(srcNl, &linkAttrs.msg.ifi, sizeof(linkAttrs.msg.ifi));
+	nlPushAttr(srcNl, IFLA_NET_NS_FD);
+		nlBufferAppend(srcNl, &dstCtx->fd, sizeof(dstCtx->fd));
+	nlPopAttr(srcNl);
+	err = nlSendMessage(srcNl, true, NULL, NULL);
+	if (err != 0) goto cleanup;
+
+	// Get index in new namespace
+	int newIdx = netGetInterfaceIndex(dstCtx, intfName, &err);
+	if (newIdx == -1) goto cleanup;
+	linkAttrs.msg.ifi.ifi_index = newIdx;
+	addrAttrs.msg.ifa.ifa_index = (__u32)newIdx;
+
+	// TODO Switching namespaces should not be necessary, but is. This is a bug
+	// somewhere (either in our code, or the kernel).
+	err = netSwitchNamespace(dstCtx);
+	if (err != 0) goto cleanup;
+
+	// Set old link attributes
+	if (linkAttrs.rtAttrSize > 0) {
+		nlInitMessage(dstNl, RTM_NEWLINK, NLM_F_ACK);
+		nlBufferAppend(dstNl, &linkAttrs.msg.ifi, sizeof(linkAttrs.msg.ifi));
+		nlBufferAppend(dstNl, linkAttrs.rtAttrs, linkAttrs.rtAttrSize);
+		err = nlSendMessage(dstNl, true, NULL, NULL);
+		if (err != 0) goto cleanup;
+	}
+
+	// Set old link addresses
+	if (addrAttrs.rtAttrSize > 0) {
+		nlInitMessage(dstNl, RTM_NEWADDR, NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE);
+		nlBufferAppend(dstNl, &addrAttrs.msg.ifa, sizeof(addrAttrs.msg.ifa));
+		nlBufferAppend(dstNl, addrAttrs.rtAttrs, addrAttrs.rtAttrSize);
+		err = nlSendMessage(dstNl, true, NULL, NULL);
+		if (err != 0) goto cleanup;
+	}
+
+cleanup:
+	if (linkAttrs.rtAttrs != NULL) free(linkAttrs.rtAttrs);
+	if (addrAttrs.rtAttrs != NULL) free(addrAttrs.rtAttrs);
+	return err;
 }
 
 int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, bool sync) {
