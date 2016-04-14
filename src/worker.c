@@ -240,11 +240,18 @@ int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool existing) {
 		if (err != 0) return err;
 
 		// Reject everything initially, but switch ARP normally
-		err = ovsArpOnly(rootSwitch, RootBridgeName, OvsPriorityArp);
+		err = ovsClearFlows(rootSwitch, RootBridgeName);
+		if (err != 0) return err;
+
+		err = netSetInterfaceUp(rootNet, RootBridgeName, true);
 		if (err != 0) return err;
 	}
 
 	return 0;
+}
+
+static int addArpResponses(ip4Addr addr, void* userData) {
+	return ovsAddArpResponse(rootSwitch, RootBridgeName, addr, (const macAddr*)userData, OvsPriorityArp);
 }
 
 int workerAddEdgeInterface(const char* intfName) {
@@ -255,13 +262,20 @@ int workerAddEdgeInterface(const char* intfName) {
 	int intfIdx = netGetInterfaceIndex(defaultNet, intfName, &err);
 	if (intfIdx == -1) return err;
 
-	err = netMoveInterface(defaultNet, intfName, intfIdx, rootNet);
+	err = netMoveInterface(defaultNet, intfName, intfIdx, rootNet, &intfIdx);
 	if (err != 0) return err;
 
 	err = netSetInterfaceUp(rootNet, intfName, true);
 	if (err != 0) return err;
 
 	err = ovsAddPort(rootSwitch, RootBridgeName, intfName);
+	if (err != 0) return err;
+
+	macAddr intfMac;
+	err = netGetLocalMacAddr(rootNet, intfName, &intfMac);
+	if (err != 0) return err;
+
+	err = netEnumAddresses(&addArpResponses, rootNet, intfIdx, &intfMac);
 	if (err != 0) return err;
 
 	return 0;
@@ -598,7 +612,7 @@ int workerDestroyHosts(void) {
 		} else {
 			while (intfToMove != NULL) {
 				lprintf(LogDebug, "Restoring %p:'%s' (index %d) to default namespace\n", ctx, intfToMove->name, intfToMove->idx);
-				if (netMoveInterface(ctx, intfToMove->name, intfToMove->idx, defaultNet) != 0) {
+				if (netMoveInterface(ctx, intfToMove->name, intfToMove->idx, defaultNet, NULL) != 0) {
 					lprintf(LogWarning, "Failed to restore interface '%s' to the default network namespace. You may need to reconfigure the interface's IP address so that edge nodes can be reached.\n", intfToMove->name);
 				}
 

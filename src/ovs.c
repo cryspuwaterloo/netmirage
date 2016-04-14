@@ -367,7 +367,7 @@ int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName) {
 	return 0;
 }
 
-int ovsArpOnly(ovsContext* ctx, const char* bridge, uint32_t priority) {
+int ovsClearFlows(ovsContext* ctx, const char* bridge) {
 	int err = switchContext(ctx);
 	if (err != 0) return err;
 
@@ -376,11 +376,66 @@ int ovsArpOnly(ovsContext* ctx, const char* bridge, uint32_t priority) {
 	err = ovsCommand(ctx->directory, "ovs-ofctl", "del-flows", bridge, NULL);
 	if (err != 0) return err;
 
-	char actions[256];
-	snprintf(actions, 256, "arp, priority=%u, actions=NORMAL", priority);
+	return 0;
+}
 
-	err = ovsCommand(ctx->directory, "ovs-ofctl", "add-flow", bridge, actions, NULL);
-	return err;
+int ovsAddArpResponse(ovsContext* ctx, const char* bridge, ip4Addr ip, const macAddr* mac, uint32_t priority) {
+	int err = switchContext(ctx);
+	if (err != 0) return err;
+
+	char ipStr[IP4_ADDR_BUFLEN];
+	ip4AddrToString(ip, ipStr);
+
+	char macStr[MAC_ADDR_BUFLEN];
+	macAddrToString(mac, macStr);
+
+	// OVS requires the IP address in big endian hex string format
+	char ipOctetStr[4*2+1];
+	for (int i = 0; i < 4; ++i) {
+		sprintf(&ipOctetStr[i*2], "%02x", (uint8_t)(((uint32_t)ip) >> (8 * i)) & 0xFFU);
+	}
+	ipOctetStr[4*2] = '\0';
+
+	char macOctetStr[MAC_ADDR_BYTES*2+1];
+	for (int i = 0; i < MAC_ADDR_BYTES; ++i) {
+		sprintf(&macOctetStr[i*2], "%02x", mac->octets[i]);
+	}
+	macOctetStr[MAC_ADDR_BYTES*2] = '\0';
+
+	lprintf(LogDebug, "Adding ARP response %s => %s to Open vSwitch bridge '%s' in context %p\n", ipStr, macStr, bridge, ctx);
+
+	// We rewrite the source packet to transform it into an ARP response. There
+	// isn't any cleaner way to do this in Open vSwitch, but this approach is
+	// well-known online. One of our constraints is that we don't want to send
+	// responses for internal ports (e.g., those switch ports connected to the
+	// namespaces), so a simple action=NORMAL for ARP traffic is insufficient.
+
+	size_t actionLen = 0;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "dl_type=0x0806, priority=%u,", priority);
+	--actionLen; // Remove NUL terminator to concatenate
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "nw_dst=%s,", ipStr);
+	--actionLen;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "actions=move:NXM_OF_ETH_SRC[]->NXM_OF_ETH_DST[],");
+	--actionLen;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "mod_dl_src:%s,", macStr);
+	--actionLen;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "load:0x2->NXM_OF_ARP_OP[], move:NXM_NX_ARP_SHA[]->NXM_NX_ARP_THA[], move:NXM_OF_ARP_SPA[]->NXM_OF_ARP_TPA[],");
+	--actionLen;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "load:0x%s->NXM_NX_ARP_SHA[],", macOctetStr);
+	--actionLen;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "load:0x%s->NXM_OF_ARP_SPA[],", ipOctetStr);
+	--actionLen;
+
+	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "in_port");
+
+	return ovsCommand(ctx->directory, "ovs-ofctl", "add-flow", bridge, ctx->actionBuffer, NULL);
 }
 
 int ovsAddIpFlow(ovsContext* ctx, const char* bridge, uint32_t inPort, const ip4Subnet* srcNet, const ip4Subnet* dstNet, const macAddr* newSrcMac, const macAddr* newDstMac, uint32_t outPort, uint32_t priority) {

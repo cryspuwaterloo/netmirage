@@ -83,7 +83,7 @@ int netGetInterfaceIndex(netContext* ctx, const char* name, int* err);
 
 // Moves an interface from one namespace to another. Returns 0 on success or an
 // error code otherwise.
-int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx);
+int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx, int* newIdx);
 
 // Adds an IPv4 address to an interface. subnetBits specifies the prefix length
 // of the subnet. Returns 0 on success or an error code otherwise.
@@ -93,6 +93,12 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t s
 // addresses; this deletes only one of them. Returns 0 on success or an error
 // code otherwise.
 int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync);
+
+// Enumerates all of the network addresses associated with a given interface. If
+// callback returns a non-zero value, enumeration is terminated and the value is
+// returned to the caller. Returns 0 on success.
+typedef int (*netAddrCallback)(ip4Addr addr, void* userData);
+int netEnumAddresses(netAddrCallback callback, netContext* ctx, int devIdx, void* userData);
 
 // Brings an interface up or shuts it down. Returns 0 on success or an error
 // code otherwise.

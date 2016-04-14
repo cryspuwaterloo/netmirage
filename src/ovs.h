@@ -42,10 +42,13 @@ int ovsAddBridge(ovsContext* ctx, const char* name);
 // code otherwise.
 int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName);
 
-// Deletes all flows in a bridge except for normal responses to ARP packets. All
-// other traffic will be silently dropped. Returns 0 on success or an error code
-// otherwise.
-int ovsArpOnly(ovsContext* ctx, const char* bridge, uint32_t priority);
+// Deletes all flows in a bridge. All traffic will be silently dropped. Returns
+// 0 on success or an error code otherwise.
+int ovsClearFlows(ovsContext* ctx, const char* bridge);
+
+// Adds a flow to respond to ARP queries to bridge for ip. Returns 0 on success
+// or an error code otherwise.
+int ovsAddArpResponse(ovsContext* ctx, const char* bridge, ip4Addr ip, const macAddr* mac, uint32_t priority);
 
 // Adds a new IPv4 flow to a bridge. Matches traffic the comes from the inPort
 // and with the given source and destination subnets. If inPort is 0, any port

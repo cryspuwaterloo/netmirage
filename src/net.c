@@ -442,7 +442,7 @@ static int netParseLinkInfo(const nlContext* ctx, const void* data, uint32_t len
 	return 0;
 }
 
-int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx) {
+int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx, int* newIdx) {
 	lprintf(LogDebug, "Moving interface %p:%d to context %p\n", srcCtx, devIdx, dstCtx);
 
 	// If the interface is simply moved using RTM_NEWLINK, which is what
@@ -486,10 +486,11 @@ int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netCo
 	if (err != 0) goto cleanup;
 
 	// Get index in new namespace
-	int newIdx = netGetInterfaceIndex(dstCtx, intfName, &err);
-	if (newIdx == -1) goto cleanup;
-	linkAttrs.msg.ifi.ifi_index = newIdx;
-	addrAttrs.msg.ifa.ifa_index = (__u32)newIdx;
+	int idx = netGetInterfaceIndex(dstCtx, intfName, &err);
+	if (idx == -1) goto cleanup;
+	linkAttrs.msg.ifi.ifi_index = idx;
+	addrAttrs.msg.ifa.ifa_index = (__u32)idx;
+	if (newIdx != NULL) *newIdx = idx;
 
 	// TODO Switching namespaces should not be necessary, but is. This is a bug
 	// somewhere (either in our code, or the kernel).
@@ -684,6 +685,42 @@ int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
 	nlBufferAppend(nl, &ifa, sizeof(ifa));
 
 	return nlSendMessage(nl, true, NULL, NULL);
+}
+
+typedef struct {
+	netAddrCallback callback;
+	int findIndex;
+	void* userData;
+} netAddrContext;
+
+static int netSearchAddr(const nlContext* ctx, const void* data, uint32_t len, uint16_t type, uint16_t flags, void* arg) {
+	netAddrContext* addrCtx = arg;
+
+	const struct ifaddrmsg* ifa = data;
+	if ((int)ifa->ifa_index != addrCtx->findIndex) return 0;
+	if (ifa->ifa_family != AF_INET) return 0;
+
+	for (const struct rtattr* rta = (const struct rtattr*)((const char*)data + NLMSG_ALIGN(sizeof(struct ifaddrmsg))); RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+		if (rta->rta_type == IFA_ADDRESS) {
+			ip4Addr addr = *(uint32_t*)RTA_DATA(rta);
+			addrCtx->callback(addr, addrCtx->userData);
+			break;
+		}
+	}
+	return 0;
+}
+
+int netEnumAddresses(netAddrCallback callback, netContext* ctx, int devIdx, void* userData) {
+	nlContext* nl = &ctx->nl;
+
+	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
+	ifa.ifa_index = (unsigned int)devIdx;
+
+	netAddrContext addrCtx = { .callback = callback, .findIndex = devIdx, .userData = userData };
+
+	nlInitMessage(nl, RTM_GETADDR, NLM_F_ACK | NLM_F_ROOT);
+	nlBufferAppend(nl, &ifa, sizeof(ifa));
+	return nlSendMessage(nl, true, &netSearchAddr, &addrCtx);
 }
 
 int netSetInterfaceUp(netContext* ctx, const char* name, bool up) {
