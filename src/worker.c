@@ -247,7 +247,7 @@ int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool existing) {
 	return 0;
 }
 
-int workerAddEdgeInterface(const char* intfName, uint32_t* portId) {
+int workerAddEdgeInterface(const char* intfName) {
 	lprintf(LogDebug, "Adding external interface '%s' to the switch in the root namespace\n", intfName);
 
 	int err;
@@ -261,7 +261,7 @@ int workerAddEdgeInterface(const char* intfName, uint32_t* portId) {
 	err = netSetInterfaceUp(rootNet, intfName, true);
 	if (err != 0) return err;
 
-	err = ovsAddPort(rootSwitch, RootBridgeName, intfName, portId);
+	err = ovsAddPort(rootSwitch, RootBridgeName, intfName);
 	if (err != 0) return err;
 
 	return 0;
@@ -464,7 +464,7 @@ int workerAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, co
 	return 0;
 }
 
-int workerAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort) {
+int workerAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort, uint32_t clientPorts[]) {
 	lprintf(LogDebug, "Adding routes to root namespace for client node %u\n", clientId);
 
 	// We have two objectives: packets for the subnet from other clients must be
@@ -515,20 +515,19 @@ int workerAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet
 	// rules to the root switch
 
 	char intfBuf[INTERFACE_BUF_LEN];
-	uint32_t portId;
 
 	// Incoming "self" link for intra-client communication
 	sprintRootSelfIntf(intfBuf, clientId);
-	err = ovsAddPort(rootSwitch, RootBridgeName, intfBuf, &portId);
+	err = ovsAddPort(rootSwitch, RootBridgeName, intfBuf);
 	if (err != 0) return err;
-	err = ovsAddIpFlow(rootSwitch, RootBridgeName, edgePort, subnet, subnet, &clientMacs[MAC_ROOT_SELF], &clientMacs[MAC_CLIENT_SELF], portId, OvsPrioritySelf);
+	err = ovsAddIpFlow(rootSwitch, RootBridgeName, edgePort, subnet, subnet, &clientMacs[MAC_ROOT_SELF], &clientMacs[MAC_CLIENT_SELF], clientPorts[0], OvsPrioritySelf);
 	if (err != 0) return err;
 
 	// Incoming uplink for inter-client communication
 	sprintRootUpIntf(intfBuf, clientId);
-	err = ovsAddPort(rootSwitch, RootBridgeName, intfBuf, &portId);
+	err = ovsAddPort(rootSwitch, RootBridgeName, intfBuf);
 	if (err != 0) return err;
-	err = ovsAddIpFlow(rootSwitch, RootBridgeName, edgePort, subnet, NULL, &clientMacs[MAC_ROOT_OTHER], &clientMacs[MAC_CLIENT_OTHER], portId, OvsPriorityIn);
+	err = ovsAddIpFlow(rootSwitch, RootBridgeName, edgePort, subnet, NULL, &clientMacs[MAC_ROOT_OTHER], &clientMacs[MAC_CLIENT_OTHER], clientPorts[1], OvsPriorityIn);
 	if (err != 0) return err;
 
 	return 0;

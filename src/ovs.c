@@ -24,7 +24,6 @@ struct ovsContext_s {
 	char* dbSocketConnArg;
 	char* actionBuffer; // Flexible buffer
 	size_t actionBufferCap;
-	uint32_t nextPortId;
 };
 
 static int switchContext(ovsContext* ctx) {
@@ -298,7 +297,6 @@ ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSche
 	ctx->directory = directory;
 	ctx->dbSocketConnArg = ovsdbSocketConnArg;
 	flexBufferInit((void**)&ctx->actionBuffer, NULL, &ctx->actionBufferCap);
-	ctx->nextPortId = 1;
 	lprintf(LogDebug, "Created Open vSwitch context %p\n", ctx);
 	goto cleanup;
 abort:
@@ -358,16 +356,14 @@ int ovsAddBridge(ovsContext* ctx, const char* name) {
 	return err;
 }
 
-int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName, uint32_t* portId) {
+int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName) {
 	int err = switchContext(ctx);
 	if (err != 0) return err;
 
-	lprintf(LogDebug, "Adding interface '%s' to Open vSwitch bridge '%s' with port index %u in context %p\n", intfName, bridge, ctx->nextPortId, ctx);
+	lprintf(LogDebug, "Adding interface '%s' to Open vSwitch bridge '%s' in context %p\n", intfName, bridge, ctx);
 	err = ovsCommand(ctx->directory, "ovs-vsctl", ctx->dbSocketConnArg, "add-port", bridge, intfName, NULL);
 	if (err != 0) return err;
 
-	if (portId != NULL) *portId = ctx->nextPortId;
-	++ctx->nextPortId;
 	return 0;
 }
 

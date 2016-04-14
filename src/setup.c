@@ -386,6 +386,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 
 	int err;
 	uint32_t* edgePorts = eamalloc(globalParams->edgeNodeCount, sizeof(uint32_t), 0);
+	uint32_t nextOvsPort = 1;
 
 	ip4Addr rootAddrs[2];
 	for (int i = 0; i < 2; ++i) {
@@ -419,8 +420,9 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		}
 		if (duplicate) continue;
 
-		DO_OR_GOTO(workAddEdgeInterface(edge->intf, &edgePorts[i]), cleanup, err);
+		DO_OR_GOTO(workAddEdgeInterface(edge->intf), cleanup, err);
 		DO_OR_GOTO(workJoin(false), cleanup, err);
+		edgePorts[i] = nextOvsPort++;
 
 		macAddr edgeLocalMac;
 		DO_OR_GOTO(workGetEdgeLocalMac(edge->intf, &edgeLocalMac), cleanup, err);
@@ -485,7 +487,8 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 			ip4SubnetToString(&node->clientSubnet, subnet);
 			lprintf(LogDebug, "Assigned client node %u to subnet %s owned by edge %lu\n", id, subnet, edgeIdx);
 		}
-		DO_OR_GOTO(workAddClientRoutes((nodeId)id, node->clientMacs, &node->clientSubnet, edgePorts[edgeIdx]), cleanup, err);
+		DO_OR_GOTO(workAddClientRoutes((nodeId)id, node->clientMacs, &node->clientSubnet, edgePorts[edgeIdx], nextOvsPort), cleanup, err);
+		nextOvsPort += NEEDED_PORTS_CLIENT;
 		// We need to join here because Open vSwitch locks the database file
 		// when processing commands. They cannot be parallelized.
 		DO_OR_GOTO(workJoin(false), cleanup, err);

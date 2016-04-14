@@ -21,6 +21,7 @@
 
 #define NEEDED_MACS_LINK 2
 #define NEEDED_MACS_CLIENT (2 * NEEDED_MACS_LINK)
+#define NEEDED_PORTS_CLIENT 2
 
 // Initializes the work subsystem. Free resources with workCleanup.
 // workConfigure must be called before sending any work commands.
@@ -50,9 +51,10 @@ int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther);
 // Adds an external interface to the root namespace. This removes it from the
 // init namespace, so it will appear to vanish from a simple "ifconfig" listing.
 // The interface is added to the switch, thereby connecting it to to virtual
-// network. The port number of the interface in the bridge is returned in
-// portId, which is needed to set up client routes.
-int workAddEdgeInterface(const char* intfName, uint32_t* portId);
+// network. Port numbers are assigned on a first-come-first-served basis, so the
+// caller should ensure that workJoin is called between workAddEdgeInterface
+// calls.
+int workAddEdgeInterface(const char* intfName);
 
 // Creates a new virtual host in its own network namespace. If the node is a
 // client, then it is connected to the root. If the node is a client, then macs
@@ -78,9 +80,11 @@ int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, cons
 // the range that the client node is responsible for. This also adds the
 // associated flow rules to the switch in the root namespace. clientMacs should
 // have the same value as the call to workAddHost. edgePort is the port
-// identifier for the associated edge node interface, as returned by
-// workAddEdgeInterface.
-int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort);
+// identifier for the associated edge node interface, as assigned during the
+// workAddEdgeInterface call. nextOvsPort should be the next available port in
+// the switch. This call will add NEEDED_PORTS_CLIENT ports to the switch. The
+// caller should join between calls in order to prevent port number races.
+int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort, uint32_t nextOvsPort);
 
 // Adds egression routes for an edge node to the switch in the root namespace.
 // edgeLocalMac should be the MAC address associated with the edge interface,

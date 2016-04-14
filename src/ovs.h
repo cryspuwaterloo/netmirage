@@ -40,7 +40,7 @@ int ovsAddBridge(ovsContext* ctx, const char* name);
 // Adds a port to the bridge in the given Open vSwitch instance. If portId is
 // not NULL, it is set to the new port index. Returns 0 on success or an error
 // code otherwise.
-int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName, uint32_t* portId);
+int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName);
 
 // Deletes all flows in a bridge except for normal responses to ARP packets. All
 // other traffic will be silently dropped. Returns 0 on success or an error code

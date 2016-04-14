@@ -127,6 +127,7 @@ typedef struct {
 			macAddr clientMacs[NEEDED_MACS_CLIENT];
 			ip4Subnet subnet;
 			uint32_t edgePort;
+			uint32_t clientPorts[NEEDED_PORTS_CLIENT];
 		} addClientRoutes;
 		struct {
 			ip4Subnet edgeSubnet;
@@ -161,9 +162,6 @@ typedef struct {
 		struct {
 			macAddr mac;
 		} gotMac;
-		struct {
-			uint32_t portId;
-		} addedEdgeInterface;
 	};
 } WorkerResponse;
 
@@ -534,12 +532,7 @@ static int childProcess(guint id) {
 				err = workerAddRoot(order.addRoot.addrSelf, order.addRoot.addrOther, order.addRoot.existing);
 				break;
 			case WorkerAddEdgeInterface: {
-				WorkerResponse resp;
-				ZERO_RESPONSE(&resp);
-				resp.code = ResponseAddedEdgeInterface;
-
-				err = workerAddEdgeInterface(order.addEdgeInterface.intfName, &resp.addedEdgeInterface.portId);
-				if (err == 0) writeAll(STDOUT_FILENO, &resp, sizeof(WorkerResponse));
+				err = workerAddEdgeInterface(order.addEdgeInterface.intfName);
 				break;
 			}
 			case WorkerAddHost:
@@ -558,7 +551,7 @@ static int childProcess(guint id) {
 				err = workerAddInternalRoutes(order.addInternalRoutes.id1, order.addInternalRoutes.id2, order.addInternalRoutes.ip1, order.addInternalRoutes.ip2, &order.addInternalRoutes.subnet1, &order.addInternalRoutes.subnet2);
 				break;
 			case WorkerAddClientRoutes:
-				err = workerAddClientRoutes(order.addClientRoutes.clientId, order.addClientRoutes.clientMacs, &order.addClientRoutes.subnet, order.addClientRoutes.edgePort);
+				err = workerAddClientRoutes(order.addClientRoutes.clientId, order.addClientRoutes.clientMacs, &order.addClientRoutes.subnet, order.addClientRoutes.edgePort, order.addClientRoutes.clientPorts);
 				break;
 			case WorkerAddEdgeRoutes:
 				err = workerAddEdgeRoutes(&order.addEdgeRoutes.edgeSubnet, order.addEdgeRoutes.edgePort, &order.addEdgeRoutes.edgeLocalMac, &order.addEdgeRoutes.edgeRemoteMac);
@@ -851,19 +844,10 @@ int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther) {
 	return (success ? 0 : 1);
 }
 
-int workAddEdgeInterface(const char* intfName, uint32_t* portId) {
+int workAddEdgeInterface(const char* intfName) {
 	WorkerOrder* order = newOrder(WorkerAddEdgeInterface);
 	strncpy(order->addEdgeInterface.intfName, intfName, INTERFACE_BUF_LEN);
-	int err = sendOrder(order, false);
-	if (err != 0) return err;
-
-	g_mutex_lock(&workMain.lock);
-	err = waitForResponse(ResponseAddedEdgeInterface);
-	if (err == 0) {
-		*portId = workMain.response.addedEdgeInterface.portId;
-	}
-	g_mutex_unlock(&workMain.lock);
-	return err;
+	return sendOrder(order, false);
 }
 
 int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
@@ -918,11 +902,14 @@ int workAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, cons
 	return sendOrder(order, false);
 }
 
-int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort) {
+int workAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort, uint32_t nextOvsPort) {
 	WorkerOrder* order = newOrder(WorkerAddClientRoutes);
 	order->addClientRoutes.clientId = clientId;
 	for (int i = 0; i < NEEDED_MACS_CLIENT; ++i) {
 		memcpy(order->addClientRoutes.clientMacs[i].octets, clientMacs[i].octets, MAC_ADDR_BYTES);
+	}
+	for (int i = 0; i < NEEDED_PORTS_CLIENT; ++i) {
+		order->addClientRoutes.clientPorts[i] = nextOvsPort++;
 	}
 	order->addClientRoutes.subnet = *subnet;
 	order->addClientRoutes.edgePort = edgePort;
