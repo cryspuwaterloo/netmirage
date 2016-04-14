@@ -1,7 +1,6 @@
 # Output
 build
 bin
-src/version.c
 
 # Configuration
 setup.cfg
