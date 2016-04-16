@@ -17,7 +17,7 @@ def AutoVersion(target, source, env):
 			if not dirtyRepo:
 				dirtyRepo = subprocess.call(['git', 'diff-files', '--quiet'])
 				if not dirtyRepo:
-					dirtyRepo = subprocess.check_output(['git', 'ls-files', '--exclude-standard', '--others', '../..']).strip()
+					dirtyRepo = subprocess.check_output(['git', 'ls-files', '--exclude-standard', '--others', Dir('#.git').abs_path()]).strip()
 			if dirtyRepo:
 				print 'Dirty git workspace; using timed version'
 				appVersion['version'] = '%s.%d'%(appVersion['version'], int(time.time()))
