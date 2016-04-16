@@ -1,0 +1,5 @@
+#include "version.h"
+const char* getVersionString(void) { return "$name $version"; }
+uint16_t getVersionMajor(void) { return $major; }
+uint16_t getVersionMinor(void) { return $minor; }
+uint16_t getVersionRevision(void) { return $revision; }

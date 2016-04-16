@@ -1,35 +1,19 @@
-import subprocess
-import SCons.Errors
-
 Import('env')
 
-# Resolve libxml dependency
-try:
-	libXmlVersion = subprocess.check_output(['xml2-config', '--version']).strip()
-	libXmlFlags = subprocess.check_output(['xml2-config', '--cflags']).strip()
-	libXmlLibs = subprocess.check_output(['xml2-config', '--libs']).strip()
-except:
-	raise SCons.Errors.UserError, 'Could not locate libxml install location. Ensure that libxml is installed and xml2-config is in the system path.'
-print 'Using libxml %s [flags = %s] [libs = %s]'%(libXmlVersion, libXmlFlags, libXmlLibs)
-env.Append(CFLAGS = libXmlFlags)
-env.Append(LINKFLAGS = libXmlLibs)
+env.ParseConfig('xml2-config --cflags --libs')
+env.ParseConfig('pkg-config --cflags --libs libcap')
+env.Append(LIBS = 'm')
 
-# Resolve libcap dependency
-try:
-	libCapFlags = subprocess.check_output(['pkg-config', '--cflags', 'libcap']).strip()
-	libCapLibs = subprocess.check_output(['pkg-config', '--libs', 'libcap']).strip()
-except:
-	raise SCons.Errors.UserError, 'Could not locate libcap install location. Ensure that libcap is installed and visible to pkg-config.'
-print 'Using libcap [flags = %s] [libs = %s]'%(libCapFlags, libCapLibs)
-env.Append(CFLAGS = libCapFlags)
-env.Append(LINKFLAGS = libCapLibs)
+verObj = env.Object('../auto/version.c')
+env.Append(LINKFLAGS = str(verObj[0]))
 
-# Custom flags
-env.Append(LINKFLAGS = '-lm')
+env.Append(CPPPATH = '../auto')
+env.Append(CPPPATH = '../common')
+env.Append(CPPPATH = '.')
 
-# Build and install
-Import('targetName')
-Import('commonDeps')
-app = env.Program(targetName, commonDeps + Glob('*.c'))
-env.Clean(app, commonDeps)
-env.Install('../../bin', app)
+env.Append(LIBS = 'netmirage-common')
+env.Append(LIBPATH = '../common')
+
+Import('targetSuffix')
+app = env.Program("#bin/netmirage"+targetSuffix, Glob('*.c') + Glob('../common/*.c'))
+env.Requires(app, verObj)
