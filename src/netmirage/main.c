@@ -1,11 +1,3 @@
-#include <linux/version.h>
-#ifndef __linux__
-#error "This program can only be compiled on Linux, since it uses Linux-specific networking features."
-#endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
-#error "This program must be compiled with Linux kernel version 3.3 or later."
-#endif
-
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -33,7 +25,7 @@
 
 // Argp version and help configuration
 static void argpVersion(FILE* stream, struct argp_state* state) {
-	fprintf(stream, "%s\n", getVersionString());
+	fprintf(stream, "NetMirage %s\n", getVersion());
 }
 void (*argp_program_version_hook)(FILE*, struct argp_state*) = &argpVersion;
 
@@ -438,7 +430,7 @@ int main(int argc, char** argv) {
 	logSetThreshold(args.verbosity);
 	if (err != 0) goto cleanup;
 
-	lprintf(LogInfo, "Starting %s\n", getVersionString());
+	lprintf(LogInfo, "Starting NetMirage %s\n", getVersion());
 
 	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;

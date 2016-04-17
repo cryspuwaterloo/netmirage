@@ -1,8 +1,7 @@
 Import('env')
 env = env.Clone()
 
-env.ParseConfig('xml2-config --cflags --libs')
-env.Append(LIBS = 'm')
+#env.Append(LIBS = 'm')
 
 Import('verObj')
 env.Append(CPPPATH = '../auto')
@@ -14,5 +13,5 @@ env.Append(LIBS = 'netmirage-common')
 env.Append(LIBPATH = '../common')
 
 Import('targetSuffix')
-app = env.Program('#bin/netmirage'+targetSuffix, Glob('*.c'))
+app = env.Program('#bin/netmirage-edge'+targetSuffix, Glob('*.c'))
 env.Requires(app, verObj)

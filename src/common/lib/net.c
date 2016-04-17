@@ -1,6 +1,14 @@
 // See the GOTCHAS file for common issues and misconceptions related to this
 // module, or if the code stops working in a new kernel version.
 
+#include <linux/version.h>
+#ifndef __linux__
+#error "This program can only be compiled on Linux, since it uses Linux-specific networking features."
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
+#error "This program must be compiled with Linux kernel version 3.3 or later."
+#endif
+
 #define _GNU_SOURCE
 
 #include "net.h"
