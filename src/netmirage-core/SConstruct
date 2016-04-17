@@ -14,5 +14,5 @@ env.Append(LIBS = 'netmirage-common')
 env.Append(LIBPATH = '../common')
 
 Import('targetSuffix')
-app = env.Program('#bin/netmirage'+targetSuffix, Glob('*.c'))
+app = env.Program('#bin/netmirage-core'+targetSuffix, Glob('*.c'))
 env.Requires(app, verObj)
