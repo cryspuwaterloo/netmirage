@@ -9,6 +9,7 @@
 #include <glib.h>
 #include <libxml/parser.h>
 
+#include "app.h"
 #include "ip.h"
 #include "log.h"
 #include "mem.h"
@@ -23,47 +24,10 @@
 // TODO: normalize (return result, out err) vs (return err, out result)
 // TODO: normalize res and err
 
-// Argp version and help configuration
-static void argpVersion(FILE* stream, struct argp_state* state) {
-	fprintf(stream, "NetMirage %s\n", getVersion());
-}
-void (*argp_program_version_hook)(FILE*, struct argp_state*) = &argpVersion;
-
-// Compares an argument to a list of possibilities and returns the matching
-// index. Returns a negative value if unmatched.
-static long matchArg(const char* arg, const char* options[], struct argp_state* state) {
-	if (arg[0]) {
-		// First try converting arg to an index
-		char* endptr;
-		long userIndex = strtol(arg, &endptr, 10);
-		if (endptr[0]) userIndex = -1; // String is not an index
-
-		// Scan the options until we find a match
-		long index = -1;
-		const char* option;
-		while ((option = options[++index]) != NULL) {
-			if (index == userIndex || strcasecmp(arg, option) == 0) {
-				return index;
-			}
-		}
-	}
-	return -1;
-}
-
 // Argument data recovered by argp
 static struct {
-	const char* setupFile;
-
 	size_t edgeNodeCap; // Buffer length is stored in the setupParams
 	bool loadedEdgesFromSetup;
-
-	LogLevel verbosity;
-	const char* logFile;
-
-	// Buffer for string data
-	char* argBuf;
-	size_t argBufLen;
-	size_t argBufCap;
 
 	// Actual parameters for setup procedure
 	setupParams params;
@@ -74,8 +38,9 @@ static struct {
 static const float ShadowDivisor = 125.f;    // KiB/s
 static const float ModelNetDivisor = 1000.f; // Kb/s
 
-#define DEFAULT_SETUP_FILE "setup.cfg"
 #define DEFAULT_CLIENTS_SUBNET "10.0.0.0/8"
+
+#define DEFAULT_OVS_DIR    "/tmp/netmirage"
 
 // Adds an edge node based on strings, which may be NULL
 static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macStr, const char* vsubnetStr) {
@@ -104,46 +69,29 @@ static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macS
 	return true;
 }
 
-// Argument parsing hook for finding setup file configuration
-static error_t findSetupFile(int key, char* arg, struct argp_state* state) {
-	if (key == 's') {
-		args.setupFile = arg;
-	}
-	// We just pretend that we handle everything. The second pass will catch
-	// unknown arguments.
-	return 0;
-}
-
-// Parsing hook for argp that modifies "args" global
-static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
-	char* argCopy = NULL;
-	if (arg != NULL) {
-		size_t argLen = strlen(arg)+1;
-		flexBufferGrow((void**)&args.argBuf, args.argBufLen, &args.argBufCap, argLen, 1);
-		argCopy = &args.argBuf[args.argBufLen];
-		flexBufferAppend(args.argBuf, &args.argBufLen, arg, argLen, 1);
-	}
-
+static error_t parseArg(int key, char* arg, struct argp_state* state) {
 	switch (key) {
 	case 'd': args.params.destroyFirst = true; break;
-	case 'f': args.params.srcFile = argCopy; break;
-	case 'r': args.params.ovsDir = argCopy; break;
-	case 'a': args.params.ovsSchema = argCopy; break;
-	case 's': break; // Already parsed in our first pass
+	case 'f': args.params.srcFile = arg; break;
+	case 'r': args.params.ovsDir = arg; break;
+	case 'a': args.params.ovsSchema = arg; break;
 
 	case 'i': {
 		args.params.edgeNodeDefaults.intfSpecified = true;
-		args.params.edgeNodeDefaults.intf = argCopy;
+		args.params.edgeNodeDefaults.intf = arg;
 		break;
 	}
 	case 'n': {
-		if (!ip4GetSubnet(argCopy, &args.params.edgeNodeDefaults.globalVSubnet)) {
+		if (!ip4GetSubnet(arg, &args.params.edgeNodeDefaults.globalVSubnet)) {
 			fprintf(stderr, "Invalid global virtual client subnet specified: '%s'\n", arg);
 			return EINVAL;
 		}
 		break;
 	}
 	case 'e': {
+		// We ignore edge configuration in the setup file's [emulator] group
+		if (state == NULL) break;
+
 		// If we just found an explicit edge node for the first time after
 		// loading configuration from the setup file, erase the old edges
 		if (args.loadedEdgesFromSetup) {
@@ -151,12 +99,12 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 			args.loadedEdgesFromSetup = false;
 		}
 
-		char* ip = argCopy;
+		char* ip = arg;
 		char* intf = NULL;
 		char* mac = NULL;
 		char* vsubnet = NULL;
 
-		char* optionSep = argCopy;
+		char* optionSep = arg;
 		while (true) {
 			optionSep = strchr(optionSep, ',');
 			if (optionSep == NULL) break;
@@ -197,25 +145,14 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 		break;
 	}
 
-	case 'v': {
-		long index = matchArg(argCopy, LogLevelStrings, state);
-		if (index < 0) {
-			fprintf(stderr, "Unknown logging level '%s'\n", arg);
-			return EINVAL;
-		}
-		args.verbosity = index;
-		break;
-	}
-	case 'l': args.logFile = argCopy; break;
+	case 'p': args.params.nsPrefix = arg; break;
 
-	case 'p': args.params.nsPrefix = argCopy; break;
-
-	case 'm': args.params.softMemCap = (size_t)(1024.0 * 1024.0 * strtod(argCopy, NULL)); break;
+	case 'm': args.params.softMemCap = (size_t)(1024.0 * 1024.0 * strtod(arg, NULL)); break;
 
 	case 'u': {
 		const char* options[] = {"shadow", "modelnet", "KiB", "Kb", NULL};
 		float divisors[] = {ShadowDivisor, ModelNetDivisor, ShadowDivisor, ModelNetDivisor};
-		long index = matchArg(argCopy, options, state);
+		long index = matchArg(arg, options, state);
 		if (index < 0) {
 			fprintf(stderr, "Unknown bandwidth units '%s'\n", arg);
 			return EINVAL;
@@ -223,8 +160,8 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 		args.gmlParams.bandwidthDivisor = divisors[index];
 		break;
 	}
-	case 'w': args.gmlParams.weightKey = argCopy; break;
-	case 'c': args.gmlParams.clientType = argCopy; break;
+	case 'w': args.gmlParams.weightKey = arg; break;
+	case 'c': args.gmlParams.clientType = arg; break;
 	case 't': args.gmlParams.twoPass = true; break;
 
 	default: return ARGP_ERR_UNKNOWN;
@@ -232,70 +169,17 @@ static error_t processGeneralArg(int key, char* arg, struct argp_state* state) {
 	return 0;
 }
 
-// Configurable argp processing hook. This allows us to easily reconfigure a
-// global parser for all argp option blocks.
-static argp_parser_t argParser;
-static error_t processArg(int key, char* arg, struct argp_state* state) {
-	return argParser(key, arg, state);
-}
-
-// Reads argp configuration settings from the setup key-value file. Returns true
-// on success or false on failure.
-static bool parseSetupEmulatorOptions(GKeyFile* f, const struct argp* argp) {
-	if (argp->options != NULL) {
-		for (const struct argp_option* option = argp->options; option->name != NULL || option->key != 0; ++option) {
-			if (option->name == NULL) continue;
-			// One exception: we don't allow --edge-node in the [emulator] group
-			if (option->key == 'e') continue;
-
-			gchar* val = g_key_file_get_string(f, "emulator", option->name, NULL);
-			if (val == NULL) continue;
-			error_t err = processArg(option->key, val, NULL);
-			if (err != 0 && err != ARGP_ERR_UNKNOWN) {
-				fprintf(stderr, "In setup file: the configuration for emulator flag \"%s\" was invalid: %s\n", option->name, strerror(err));
-				return false;
-			}
-			g_free(val);
-		}
-	}
-	if (argp->children != NULL) {
-		for (const struct argp_child* child = argp->children; child->argp != NULL; ++child) {
-			if (!parseSetupEmulatorOptions(f, child->argp)) return false;
-		}
-	}
-	return true;
-}
-
-// Tries to parse the options in a setup file specified in args.setupFile.
-// Updates the settings in args. Returns true on success or false on failure.
-static bool parseSetupFile(const struct argp* argp, bool mustExist) {
-	GError* gerr = NULL;
-	bool res = false;
-
-	// glib leaks global memory (according to the "still reachable but unfreed"
-	// definition) by design. There is nothing that we can do to fix this.
-	GKeyFile* f = g_key_file_new();
-
-	gchar* filename = g_filename_from_utf8(args.setupFile, -1, NULL, NULL, &gerr);
-	if (filename == NULL) {
-		fprintf(stderr, "Could not convert the setup filename ('%s') from UTF-8 to the glib filename encoding: %s\n", args.setupFile, gerr->message);
-		goto cleanup;
-	}
-
-	if (g_key_file_load_from_file(f, filename, G_KEY_FILE_NONE, &gerr) == FALSE) {
-		if (mustExist) fprintf(stderr, "Failed to load setup file '%s': %s\n", args.setupFile, gerr->message);
-		goto cleanup;
-	}
-
-	gchar** groups = g_key_file_get_groups(f, NULL);
+// Configures edge nodes using information in the setup file
+static bool readSetupEdges(GKeyFile* file) {
+	gchar** groups = g_key_file_get_groups(file, NULL);
 	for (gchar** g = groups; *g != NULL; ++g) {
 		gchar* group = *g;
 		// We allow "node" for backwards compatibility, but do not advertise it
 		if (strncmp(group, "edge", 4) == 0 || strncmp(group, "node", 4) == 0) {
-			char* ip = g_key_file_get_string(f, group, "ip", NULL);
-			char* intf = g_key_file_get_string(f, group, "iface", NULL);
-			char* mac = g_key_file_get_string(f, group, "mac", NULL);
-			char* vsubnet = g_key_file_get_string(f, group, "vsubnet", NULL);
+			char* ip = g_key_file_get_string(file, group, "ip", NULL);
+			char* intf = g_key_file_get_string(file, group, "iface", NULL);
+			char* mac = g_key_file_get_string(file, group, "mac", NULL);
+			char* vsubnet = g_key_file_get_string(file, group, "vsubnet", NULL);
 			bool added = addEdgeNode(ip, intf, mac, vsubnet);
 
 			g_free(ip);
@@ -305,30 +189,17 @@ static bool parseSetupFile(const struct argp* argp, bool mustExist) {
 
 			if (!added) {
 				fprintf(stderr, "In setup file: invalid configuration for edge node '%s'\n", group);
-				goto cleanup;
+				return false;
 			}
 			args.loadedEdgesFromSetup = true;
 		}
 	}
 	g_strfreev(groups);
-
-	res = parseSetupEmulatorOptions(f, argp);
-
-cleanup:
-	if (gerr != NULL) g_error_free(gerr);
-	if (filename != NULL) g_free(filename);
-	g_key_file_free(f);
-	return res;
+	return true;
 }
 
-#define DEFAULT_OVS_DIR    "/tmp/netmirage"
-
 int main(int argc, char** argv) {
-	// If any errors appear during startup, we send them to stderr. However, our
-	// convention is to print directly to stderr without logging decoration for
-	// configuration errors.
-	logSetStream(stderr);
-	logSetThreshold(LogWarning);
+	appInit("NetMirage Core", getVersion());
 
 	// Launch worker processes so that we can drop our privileges as quickly as
 	// possible (note that we have not handled any user input at this point)
@@ -373,7 +244,7 @@ int main(int argc, char** argv) {
 	};
 	struct argp_option defaultDoc[] = { { "\n These options provide program documentation:", 0, NULL, OPTION_DOC | OPTION_NO_USAGE }, { NULL } };
 
-	struct argp gmlArgp = { gmlOptions, &processArg };
+	struct argp gmlArgp = { gmlOptions, &appParseArg };
 	struct argp defaultDocArgp = { defaultDoc };
 
 	struct argp_child children[] = {
@@ -381,10 +252,9 @@ int main(int argc, char** argv) {
 			{ &defaultDocArgp, 0, NULL, 100 },
 			{ NULL },
 	};
-	struct argp argp = { generalOptions, &processArg, NULL, "Sets up virtual networking infrastructure for a NetMirage core node.", children };
+	struct argp argp = { generalOptions, &appParseArg, NULL, "Sets up virtual networking infrastructure for a NetMirage core node.", children };
 
 	// Default arguments
-	args.verbosity = LogWarning;
 	args.params.nsPrefix = "nm-";
 	args.params.ovsDir = DEFAULT_OVS_DIR;
 	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
@@ -394,43 +264,12 @@ int main(int argc, char** argv) {
 	args.gmlParams.weightKey = "latency";
 	args.gmlParams.twoPass = false;
 
-	flexBufferInit((void**)&args.argBuf, &args.argBufLen, &args.argBufCap);
-
 	int err = 0;
 
-	// In our first argument pass, find out if a setup file was specified
-	argParser = &findSetupFile;
-	if (argp_parse(&argp, argc, argv, 0, NULL, NULL) != 0) {
-		argp_help(&argp, stderr, ARGP_HELP_STD_USAGE, argv[0]);
-		goto cleanup;
-	}
-	bool explicitSetupFile = (args.setupFile != NULL);
-	if (!explicitSetupFile) args.setupFile = DEFAULT_SETUP_FILE;
-
-	// Setup file settings have higher priority than defaults. If we are using
-	// the default setup file, we don't care if it doesn't exist.
-	argParser = &processGeneralArg;
-	bool setupSuccess = parseSetupFile(&argp, explicitSetupFile);
-	if (explicitSetupFile && !setupSuccess) goto cleanup;
-
-	// Now parse the arguments again (explicit arguments have higher priority
-	// than anything in the setup file)
-	if (argp_parse(&argp, argc, argv, 0, NULL, NULL) != 0) {
-		argp_help(&argp, stderr, ARGP_HELP_STD_USAGE, argv[0]);
-		goto cleanup;
-	}
-
-	// Set up logging
-	if (args.logFile != NULL) {
-		if (!logSetFile(args.logFile)) {
-			fprintf(stderr, "Could not open log file '%s' for writing.\n", args.logFile);
-			err = 1;
-		}
-	}
-	logSetThreshold(args.verbosity);
+	err = appParseArgs(&parseArg, &readSetupEdges, &argp, "emulator", 's', 'l', 'v', argc, argv);
 	if (err != 0) goto cleanup;
 
-	lprintf(LogInfo, "Starting NetMirage %s\n", getVersion());
+	lprintf(LogInfo, "Starting NetMirage Core %s\n", getVersion());
 
 	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;
@@ -457,9 +296,8 @@ cleanup:
 		}
 	}
 	flexBufferFree((void**)&args.params.edgeNodes, &args.params.edgeNodeCount, &args.edgeNodeCap);
-	flexBufferFree((void**)&args.argBuf, &args.argBufLen, &args.argBufCap);
 	xmlCleanupParser();
-	logCleanup();
+	appCleanup();
 
 	return err;
 }
