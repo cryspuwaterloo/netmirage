@@ -23,6 +23,7 @@
 // TODO: more specific error codes than 1
 // TODO: normalize (return result, out err) vs (return err, out result)
 // TODO: normalize res and err
+// TODO: use inttypes.h for scanf
 
 // Argument data recovered by argp
 static struct {

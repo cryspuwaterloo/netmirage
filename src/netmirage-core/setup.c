@@ -382,7 +382,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	restrictedSubnets[subnets++] = NULL;
 	ip4Subnet everything;
 	ip4GetSubnet("0.0.0.0/0", &everything);
-	ctx.intfAddrIter = ip4NewIter(&everything, restrictedSubnets);
+	ctx.intfAddrIter = ip4NewIter(&everything, false, restrictedSubnets);
 
 	int err;
 	uint32_t* edgePorts = eamalloc(globalParams->edgeNodeCount, sizeof(uint32_t), 0);

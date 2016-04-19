@@ -238,7 +238,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 		err = setns(nsFd, CLONE_NEWNET);
 		if (err != 0) {
 			lprintf(LogError, "Failed to switch to existing network namespace: %s\n", strerror(errno));
-			goto freeDeleteAbort;
+			goto deleteAbort;
 		}
 	}
 
@@ -639,7 +639,7 @@ int netGetInterfaceIndex(netContext* ctx, const char* name, int* err) {
 	return ifr.ifr_ifindex;
 }
 
-int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t subnetBits, ip4Addr broadcastAddr, ip4Addr anycastAddr, bool sync) {
+int netModifyInterfaceAddrIPv4(netContext* ctx, bool remove, int devIdx, ip4Addr addr, uint8_t subnetBits, ip4Addr broadcastAddr, ip4Addr anycastAddr, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char ip[IP4_ADDR_BUFLEN];
 		char broadcastIp[IP4_ADDR_BUFLEN];
@@ -647,7 +647,7 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t s
 		ip4AddrToString(addr, ip);
 		ip4AddrToString(broadcastAddr, broadcastIp);
 		ip4AddrToString(anycastAddr, anycastIp);
-		lprintf(LogDebug, "Adding address to %p:%d: %s/%u, broadcast %s, anycast %s\n", ctx, devIdx, ip, subnetBits, broadcastIp, anycastIp);
+		lprintf(LogDebug, "%s address for %p:%d: %s/%u, broadcast %s, anycast %s\n", (remove ? "Removing" : "Adding"), ctx, devIdx, ip, subnetBits, broadcastIp, anycastIp);
 	}
 
 	// Using netlink for this task takes about 70% of the time that ioctl
@@ -656,7 +656,11 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t s
 	if (subnetBits > 32) subnetBits = 32;
 
 	nlContext* nl = &ctx->nl;
-	nlInitMessage(nl, RTM_NEWADDR, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
+	if (remove) {
+		nlInitMessage(nl, RTM_DELADDR, (sync ? NLM_F_ACK : 0));
+	} else {
+		nlInitMessage(nl, RTM_NEWADDR, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
+	}
 
 	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = subnetBits, .ifa_index = (unsigned int)devIdx, .ifa_flags = 0, .ifa_scope = 0 };
 	nlBufferAppend(nl, &ifa, sizeof(ifa));
@@ -681,18 +685,6 @@ int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t s
 	}
 
 	return nlSendMessage(nl, sync, NULL, NULL);
-}
-
-int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync) {
-	lprintf(LogDebug, "Deleting address from %p:%d\n", ctx, devIdx);
-
-	nlContext* nl = &ctx->nl;
-	nlInitMessage(nl, RTM_DELADDR, sync ? NLM_F_ACK : 0);
-
-	struct ifaddrmsg ifa = {.ifa_family = AF_INET, .ifa_index = (unsigned int)devIdx, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
-	nlBufferAppend(nl, &ifa, sizeof(ifa));
-
-	return nlSendMessage(nl, true, NULL, NULL);
 }
 
 typedef struct {
@@ -969,29 +961,17 @@ int netSetArpTableSize(int thresh1, int thresh2, int thresh3) {
 	return 0;
 }
 
-static bool getTableId(RoutingTable table, uint8_t* tableId) {
-	switch (table) {
-	case TableMain:
-		*tableId = RT_TABLE_MAIN;
-		break;
-	case TableLocal:
-		*tableId = RT_TABLE_LOCAL;
-		break;
-	default:
-		lprintf(LogError, "Unknown routing table constant %d\n", table);
-		return false;
+uint8_t netGetTableId(RoutingTable table) {
+	if (table == TableLocal) {
+		return RT_TABLE_LOCAL;
 	}
-	return true;
+	return RT_TABLE_MAIN;
 }
 
 static bool getScopeId(RoutingScope scope, unsigned char* scopeId) {
 	switch (scope) {
-	case ScopeLink:
-		*scopeId = RT_SCOPE_LINK;
-		break;
-	case ScopeGlobal:
-		*scopeId = RT_SCOPE_UNIVERSE;
-		break;
+	case ScopeLink:   *scopeId = RT_SCOPE_LINK;     break;
+	case ScopeGlobal: *scopeId = RT_SCOPE_UNIVERSE; break;
 	default:
 		lprintf(LogError, "Unknown routing scope %d\n", scope);
 		return false;
@@ -999,41 +979,54 @@ static bool getScopeId(RoutingScope scope, unsigned char* scopeId) {
 	return true;
 }
 
-static bool initRtMsg(struct rtmsg* rtm, unsigned char prefixLen, unsigned char table, RoutingScope scope) {
+static bool getCreatorId(RoutingCreator creator, unsigned char* creatorId) {
+	switch (creator) {
+	case CreatorAny:    *creatorId = RTPROT_UNSPEC;   break;
+	case CreatorIcmp:   *creatorId = RTPROT_REDIRECT; break;
+	case CreatorKernel: *creatorId = RTPROT_KERNEL;   break;
+	case CreatorBoot:   *creatorId = RTPROT_BOOT;     break;
+	case CreatorAdmin:  *creatorId = RTPROT_STATIC;   break;
+	default:
+		lprintf(LogError, "Unknown routing creator %d\n", creator);
+		return false;
+	}
+	return true;
+}
+
+static bool initRtMsg(struct rtmsg* rtm, unsigned char prefixLen, unsigned char table, RoutingScope scope, RoutingCreator creator) {
 	rtm->rtm_family = AF_INET;
 	rtm->rtm_dst_len = prefixLen;
 	rtm->rtm_src_len = 0;
 	rtm->rtm_tos = 0;
 
 	rtm->rtm_table = table;
-	rtm->rtm_protocol = RTPROT_STATIC;
 	rtm->rtm_type = RTN_UNICAST;
+
+	if (!getCreatorId(creator, &rtm->rtm_protocol)) return false;
 
 	rtm->rtm_flags = 0;
 
 	return getScopeId(scope, &rtm->rtm_scope);
 }
 
-int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
-	uint8_t tableId;
-	if (!getTableId(table, &tableId)) return 1;
-	return netAddRouteToTable(ctx, tableId, scope, dstAddr, subnetBits, gatewayAddr, dstDevIdx, sync);
-}
-
-int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
+int netModifyRoute(netContext* ctx, bool remove, uint8_t table, RoutingScope scope, RoutingCreator creator, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char dstIp[IP4_ADDR_BUFLEN];
 		char gatewayIp[IP4_ADDR_BUFLEN];
 		ip4AddrToString(dstAddr, dstIp);
 		ip4AddrToString(gatewayAddr, gatewayIp);
-		lprintf(LogDebug, "Adding route for namespace %p table %u: %s/%u => interface %d via %sgateway %s\n", ctx, table, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
+		lprintf(LogDebug, "%s route for namespace %p table %u: %s/%u => interface %d via %sgateway %s\n", (remove ? "Removing" : "Adding"), ctx, table, dstIp, subnetBits, dstDevIdx, gatewayAddr == 0 ? "(disabled) " : "", gatewayIp);
 	}
 
 	struct rtmsg rtm;
-	if (!initRtMsg(&rtm, subnetBits, table, scope)) return 1;
+	if (!initRtMsg(&rtm, subnetBits, table, scope, creator)) return 1;
 
 	nlContext* nl = &ctx->nl;
-	nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
+	if (remove) {
+		nlInitMessage(nl, RTM_DELROUTE, (sync ? NLM_F_ACK : 0));
+	} else {
+		nlInitMessage(nl, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
+	}
 
 	nlBufferAppend(nl, &rtm, sizeof(rtm));
 
@@ -1054,30 +1047,36 @@ int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Ad
 	return nlSendMessage(nl, sync, NULL, NULL);
 }
 
-int netAddRule(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync) {
-	uint8_t tableId;
-	if (!getTableId(table, &tableId)) return 1;
-	return netAddRuleForTable(ctx, subnet, inputIntf, tableId, priority, sync);
-}
-
-int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, uint8_t table, uint32_t priority, bool sync) {
+int netModifyRule(netContext* ctx, bool remove, const ip4Subnet* subnet, const char* inputIntf, uint8_t table, RoutingCreator creator, uint32_t priority, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		char subnetStr[IP4_CIDR_BUFLEN];
-		ip4SubnetToString(subnet, subnetStr);
-		lprintf(LogDebug, "Adding policy routing rule for %p: %s from '%s' => table %u, priority %u\n", ctx, subnetStr, (inputIntf == NULL ? "(any)" : inputIntf), table, priority);
+		if (subnet == NULL) {
+			strcpy(subnetStr, "(any)");
+		} else {
+			ip4SubnetToString(subnet, subnetStr);
+		}
+		lprintf(LogDebug, "%s policy routing rule for %p: %s from '%s' => table %u, priority %u\n", (remove ? "Removing" : "Adding"), ctx, subnetStr, (inputIntf == NULL ? "(any)" : inputIntf), table, priority);
 	}
 
 	struct rtmsg rtm;
-	if (!initRtMsg(&rtm, subnet->prefixLen, table, ScopeGlobal)) return 1;
+	if (!initRtMsg(&rtm, (subnet == NULL ? 0 : subnet->prefixLen), table, ScopeGlobal, creator)) return 1;
 
 	nlContext* nl = &ctx->nl;
-	nlInitMessage(nl, RTM_NEWRULE, NLM_F_CREATE | NLM_F_EXCL | (sync ? NLM_F_ACK : 0));
+	if (remove) {
+		nlInitMessage(nl, RTM_DELRULE, (sync ? NLM_F_ACK : 0));
+	} else {
+		// The flags are not checked in the kernel, but we provide them anyway
+		// for forward compatibility
+		nlInitMessage(nl, RTM_NEWRULE, NLM_F_CREATE | NLM_F_REPLACE | (sync ? NLM_F_ACK : 0));
+	}
 
 	nlBufferAppend(nl, &rtm, sizeof(rtm));
 
-	nlPushAttr(nl, FRA_DST);
-		nlBufferAppend(nl, &subnet->addr, sizeof(subnet->addr));
-	nlPopAttr(nl);
+	if (subnet != NULL) {
+		nlPushAttr(nl, FRA_DST);
+			nlBufferAppend(nl, &subnet->addr, sizeof(subnet->addr));
+		nlPopAttr(nl);
+	}
 
 	if (inputIntf != NULL) {
 		nlPushAttr(nl, FRA_IIFNAME);
@@ -1090,4 +1089,44 @@ int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, const char* inp
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);
+}
+
+typedef struct {
+	uint32_t priority;
+	bool* exists;
+} netEnumRuleContext;
+
+static int netRecordRuleExistence(const nlContext* ctx, const void* data, uint32_t len, uint16_t type, uint16_t flags, void* arg) {
+	netEnumRuleContext* enumCtx = arg;
+
+	uint32_t rulePriority = 0;
+
+	// Check for explicit FRA_PRIORITY. If it is missing, then it is zero.
+	const struct rtattr* rta = (const struct rtattr*)((const char*)data + NLMSG_ALIGN(sizeof(struct rtmsg)));
+	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+		if (rta->rta_type == FRA_PRIORITY) {
+			rulePriority = *(uint32_t*)RTA_DATA(rta);
+			break;
+		}
+	}
+
+	if (rulePriority == enumCtx->priority) {
+		*enumCtx->exists = true;
+	}
+	return 0;
+}
+
+int netRuleExists(netContext* ctx, uint32_t priority, bool* exists) {
+	lprintf(LogDebug, "Checking existence of routing rule in context %p with priority %u\n", ctx, priority);
+
+	*exists = false;
+
+	nlContext* nl = &ctx->nl;
+
+	struct rtmsg rtm = { .rtm_family = AF_INET, .rtm_dst_len = 0, .rtm_src_len = 0, .rtm_tos = 0, .rtm_table = 0, .rtm_protocol = 0, .rtm_scope = 0, .rtm_type = 0, .rtm_flags = 0 };
+	nlInitMessage(nl, RTM_GETRULE, NLM_F_ACK | NLM_F_ROOT);
+	nlBufferAppend(nl, &rtm, sizeof(rtm));
+
+	netEnumRuleContext enumCtx = { .priority = priority, .exists = exists };
+	return nlSendMessage(nl, true, &netRecordRuleExistence, &enumCtx);
 }

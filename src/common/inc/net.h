@@ -85,14 +85,12 @@ int netGetInterfaceIndex(netContext* ctx, const char* name, int* err);
 // error code otherwise.
 int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx, int* newIdx);
 
-// Adds an IPv4 address to an interface. subnetBits specifies the prefix length
-// of the subnet. Returns 0 on success or an error code otherwise.
-int netAddInterfaceAddrIPv4(netContext* ctx, int devIdx, ip4Addr addr, uint8_t subnetBits, ip4Addr broadcastAddr, ip4Addr anycastAddr, bool sync);
-
-// Deletes an IPv4 address from the interface. Interfaces may have multiple
-// addresses; this deletes only one of them. Returns 0 on success or an error
-// code otherwise.
-int netDelInterfaceAddrIPv4(netContext* ctx, int devIdx, bool sync);
+// Modifies an IPv4 address for an interface. Interfaces may have multiple
+// addresses. If remove is true then the address is deleted. Otherwise, it is
+// added. subnetBits specifies the prefix length of the subnet. Any of the
+// addresses may be set to 0 to omit them from the command. Returns 0 on success
+// or an error code otherwise.
+int netModifyInterfaceAddrIPv4(netContext* ctx, bool remove, int devIdx, ip4Addr addr, uint8_t subnetBits, ip4Addr broadcastAddr, ip4Addr anycastAddr, bool sync);
 
 // Enumerates all of the network addresses associated with a given interface. If
 // callback returns a non-zero value, enumeration is terminated and the value is
@@ -160,34 +158,44 @@ typedef enum {
 	TableLocal,
 } RoutingTable;
 
+// Determines the routing table index for a named table. The index is returned
+// in tableId. If the table is not a valid enum value, then the identifier for
+// the main routing table is returned.
+uint8_t netGetTableId(RoutingTable table);
+
 typedef enum {
 	ScopeLink,
 	ScopeGlobal,
 } RoutingScope;
 
-// Adds a static routing entry to the given routing table. The destination is
-// given by dstAddr with the subnetBits most significant bits specifying the
-// subnet. Packets are routed via the specified gatewayAddr. dstDevIdx
-// identifies the interface through which the packets should be sent. The
-// target gateway must be reachable when this command is executed. Moreover, the
-// all bits in dstAddr not covered by subnetBits should be set to 0. If
-// gatewayAddr is 0, then no gateway is used. Returns 0 on success or an error
-// code otherwise.
-int netAddRoute(netContext* ctx, RoutingTable table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);
+typedef enum {
+	CreatorAny,
+	CreatorIcmp,
+	CreatorKernel,
+	CreatorBoot,
+	CreatorAdmin,
+} RoutingCreator;
 
-// This function is the same as netAddRoute, except it allows the caller to
-// provide an explicit table identifier (e.g., to add routes to custom tables).
-int netAddRouteToTable(netContext* ctx, uint8_t table, RoutingScope scope, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);
+// Modifies a static routing entry to the given routing table. If remove is true
+// then the route is deleted, otherwise it is added. The destination is given by
+// dstAddr with the subnetBits most significant bits specifying the subnet.
+// Packets are routed via the specified gatewayAddr. dstDevIdx identifies the
+// interface through which the packets should be sent. The target gateway must
+// be reachable when this command is executed. Moreover, the all bits in dstAddr
+// not covered by subnetBits should be set to 0. If gatewayAddr is 0, then no
+// gateway is used. Returns 0 on success or an error code otherwise.
+int netModifyRoute(netContext* ctx, bool remove, uint8_t table, RoutingScope scope, RoutingCreator creator, ip4Addr dstAddr, uint8_t subnetBits, ip4Addr gatewayAddr, int dstDevIdx, bool sync);
 
-// Adds a new rule to Linux's policy routing system. The rule matches packets
-// within the given subnet. If inputIntf is not NULL, then the rule matches only
+// Modifies a new rule in Linux's policy routing system. If remove is true then
+// the rule is deleted, otherwise it is added. The rule matches packets within
+// the given subnet. If inputIntf is not NULL, then the rule matches only
 // packets coming from the named interface. Packets matched by this rule will be
 // routed according to the given routing table. The rule priority specifies the
 // order in which rules are evaluated. There is an unchangeable default rule
 // with priority 0 that causes the local routing table to be scanned first.
 // Returns 0 on success or an error code otherwise.
-int netAddRule(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, RoutingTable table, uint32_t priority, bool sync);
+int netModifyRule(netContext* ctx, bool remove, const ip4Subnet* subnet, const char* inputIntf, uint8_t table, RoutingCreator creator, uint32_t priority, bool sync);
 
-// This function is the same as netAddRule, except it allows the caller to
-// provide an explicit table identifier.
-int netAddRuleForTable(netContext* ctx, const ip4Subnet* subnet, const char* inputIntf, uint8_t table, uint32_t priority, bool sync);
+// Determines if a routing rule with the given priority exists. On success, sets
+// exists to the result and returns 0. Otherwise, returns an error code.
+int netRuleExists(netContext* ctx, uint32_t priority, bool* exists);

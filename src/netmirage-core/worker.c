@@ -173,7 +173,7 @@ static int applyInterfaceParams(netContext* net, const char* intfName, ip4Addr a
 	err = netSetInterfaceGro(net, intfName, false);
 	if (err != 0) return err;
 
-	err = netAddInterfaceAddrIPv4(net, *idx, addr, 0, 0, 0, true);
+	err = netModifyInterfaceAddrIPv4(net, false, *idx, addr, 0, 0, 0, true);
 	if (err != 0) return err;
 
 	err = netSetInterfaceUp(net, intfName, true);
@@ -431,9 +431,9 @@ int workerAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr ta
 	err = netSetEgressShaping(targetNet, targetIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
 	if (err != 0) return err;
 
-	err = netAddRoute(sourceNet, TableMain, ScopeLink, targetIp, 32, 0, sourceIntfIdx, true);
+	err = netModifyRoute(sourceNet, false, netGetTableId(TableMain), ScopeLink, CreatorAdmin, targetIp, 32, 0, sourceIntfIdx, true);
 	if (err != 0) return err;
-	err = netAddRoute(targetNet, TableMain, ScopeLink, sourceIp, 32, 0, targetIntfIdx, true);
+	err = netModifyRoute(targetNet, false, netGetTableId(TableMain), ScopeLink, CreatorAdmin, sourceIp, 32, 0, targetIntfIdx, true);
 	if (err != 0) return err;
 
 	return 0;
@@ -470,9 +470,9 @@ int workerAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, co
 
 	// We allow "route exists" errors because we might try to add routes to the
 	// same internal nodes multiple times. In practice, this is rare.
-	err = netAddRoute(net1, TableMain, ScopeGlobal, subnet2->addr, subnet2->prefixLen, ip2, intfIdx1, true);
+	err = netModifyRoute(net1, false, netGetTableId(TableMain), ScopeGlobal, CreatorAdmin, subnet2->addr, subnet2->prefixLen, ip2, intfIdx1, true);
 	if (err != 0 && err != EEXIST) return err;
-	err = netAddRoute(net2, TableMain, ScopeGlobal, subnet1->addr, subnet1->prefixLen, ip1, intfIdx2, true);
+	err = netModifyRoute(net2, false, netGetTableId(TableMain), ScopeGlobal, CreatorAdmin, subnet1->addr, subnet1->prefixLen, ip1, intfIdx2, true);
 	if (err != 0 && err != EEXIST) return err;
 
 	return 0;
@@ -506,13 +506,13 @@ int workerAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet
 	if (selfIdx == -1) return err;
 
 	// Default route for packets from other clients
-	err = netAddRoute(net, TableMain, ScopeLink, rootIpOther, 32, 0, downIdx, true);
+	err = netModifyRoute(net, false, netGetTableId(TableMain), ScopeLink, CreatorAdmin, rootIpOther, 32, 0, downIdx, true);
 	if (err != 0) return err;
-	err = netAddRoute(net, TableMain, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIpOther, downIdx, true);
+	err = netModifyRoute(net, false, netGetTableId(TableMain), ScopeGlobal, CreatorAdmin, subnet->addr, subnet->prefixLen, rootIpOther, downIdx, true);
 	if (err != 0) return err;
 
 	// Alternative route for packets from within the same subnet
-	err = netAddRuleForTable(net, subnet, SelfLinkPrefix, CustomTableId, CustomTablePriority, true);
+	err = netModifyRule(net, false, subnet, SelfLinkPrefix, CustomTableId, CreatorAdmin, CustomTablePriority, true);
 	if (err != 0) return err;
 	// In kernel 4, we would assign the root only one IP address. We would set
 	// the link route to be through the self interface in the custom table, and
@@ -520,9 +520,9 @@ int workerAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet
 	// this link route and will lead to an "network unreachable" error when
 	// adding the subnet route to the custom table. The workaround is to use two
 	// addresses and to place both link routes in the main table.
-	err = netAddRoute(net, TableMain, ScopeLink, rootIpSelf, 32, 0, selfIdx, true);
+	err = netModifyRoute(net, false, netGetTableId(TableMain), ScopeLink, CreatorAdmin, rootIpSelf, 32, 0, selfIdx, true);
 	if (err != 0) return err;
-	err = netAddRouteToTable(net, CustomTableId, ScopeGlobal, subnet->addr, subnet->prefixLen, rootIpSelf, selfIdx, true);
+	err = netModifyRoute(net, false, CustomTableId, ScopeGlobal, CreatorAdmin, subnet->addr, subnet->prefixLen, rootIpSelf, selfIdx, true);
 	if (err != 0) return err;
 
 	// At this point, the client namespace is fully set up. Now we add flow

@@ -12,8 +12,11 @@
 #include "log.h"
 #include "mem.h"
 
-// Buffer for string data
-static char* argBuf;
+// Buffer for string data. Each argument is duplicated individually, and the
+// flexible buffer maintains a list of pointers to free. This way, applications
+// can use the argument pointers immediately without worrying about freeing them
+// or having them move.
+static char** argBuf;
 static size_t argBufLen;
 static size_t argBufCap;
 
@@ -50,6 +53,9 @@ void appInit(const char* productName, const char* productVersion) {
 }
 
 void appCleanup(void) {
+	for (size_t i = 0; i < argBufLen; ++i) {
+		free(((char**)argBuf)[i]);
+	}
 	flexBufferFree((void**)&argBuf, &argBufLen, &argBufCap);
 
 	logCleanup();
@@ -81,27 +87,26 @@ static error_t redirectDupArg(int key, char* arg, struct argp_state* state) {
 
 	char* argCopy = NULL;
 	if (arg != NULL) {
-		size_t argLen = strlen(arg)+1;
-		flexBufferGrow((void**)&argBuf, argBufLen, &argBufCap, argLen, 1);
-		argCopy = &argBuf[argBufLen];
-		flexBufferAppend(argBuf, &argBufLen, arg, argLen, 1);
-	}
+		argCopy = strdup(arg);
+		flexBufferGrow((void**)&argBuf, argBufLen, &argBufCap, 1, sizeof(char*));
+		flexBufferAppend(argBuf, &argBufLen, &argCopy, 1, sizeof(char*));
 
-	// We can handle some flags ourself, without resorting to telling the caller
-	if (key == appLogFileKey) {
-		if (!logSetFile(arg)) {
-			fprintf(stderr, "Could not open log file '%s' for writing.\n", arg);
-			return EINVAL;
+		// We can handle some flags ourself, without resorting to telling the caller
+		if (key == appLogFileKey) {
+			if (!logSetFile(argCopy)) {
+				fprintf(stderr, "Could not open log file '%s' for writing.\n", argCopy);
+				return EINVAL;
+			}
+			return 0;
+		} else if (key == appVerbosityKey) {
+			long index = matchArg(argCopy, LogLevelStrings, state);
+			if (index < 0) {
+				fprintf(stderr, "Unknown logging level '%s'\n", argCopy);
+				return EINVAL;
+			}
+			logSetThreshold(index);
+			return 0;
 		}
-		return 0;
-	} else if (key == appVerbosityKey) {
-		long index = matchArg(arg, LogLevelStrings, state);
-		if (index < 0) {
-			fprintf(stderr, "Unknown logging level '%s'\n", arg);
-			return EINVAL;
-		}
-		logSetThreshold(index);
-		return 0;
 	}
 
 	return appCurrentArgParser(key, argCopy, state);

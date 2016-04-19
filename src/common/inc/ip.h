@@ -58,8 +58,9 @@ typedef struct ip4Iter_s ip4Iter;
 
 // Creates an iterator that enumerates IP addresses within a subnet. All
 // addresses in the "avoidSubnets" subnets will be skipped. avoidSubnets is
-// either NULL or a NULL-terminated list.
-ip4Iter* ip4NewIter(const ip4Subnet* subnet, const ip4Subnet** avoidSubnets);
+// either NULL or a NULL-terminated list. If excludeReserved is true, then any
+// reserved addresses in the range will also be skipped.
+ip4Iter* ip4NewIter(const ip4Subnet* subnet, bool excludeReserved, const ip4Subnet** avoidSubnets);
 
 // Advances the iterator. Returns true if a new address was retrieved, or false
 // if the subnet has been exhausted. Retrieve the address using ip4IterAddr.

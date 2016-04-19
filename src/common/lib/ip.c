@@ -135,23 +135,33 @@ struct ip4Iter_s {
 	ignoreRange* currentIgnore; // Cached for performance
 };
 
-ip4Iter* ip4NewIter(const ip4Subnet* subnet, const ip4Subnet** avoidSubnets) {
+ip4Iter* ip4NewIter(const ip4Subnet* subnet, bool excludeReserved, const ip4Subnet** avoidSubnets) {
+	bool needToExclude = excludeReserved && (subnet->prefixLen <= 30);
+
 	ip4Iter* it = emalloc(sizeof(ip4Iter));
 	it->currentAddr = (int64_t)(ntohl(ip4SubnetStart(subnet)))-1;
 	it->finalAddr = ntohl(ip4SubnetEnd(subnet));
-	it->ignoreCount = 0;
+	size_t givenIgnores = 0;
 	if (avoidSubnets != NULL) {
 		for (const ip4Subnet** net = avoidSubnets; *net != NULL; ++net) {
-			++it->ignoreCount;
+			++givenIgnores;
 		}
 	}
-	if (it->ignoreCount == 0) {
+	if (!needToExclude && givenIgnores == 0) {
 		it->ignores = NULL;
 	} else {
+		it->ignoreCount = givenIgnores + (needToExclude ? 2 : 0);
 		it->ignores = eamalloc(it->ignoreCount, sizeof(ignoreRange), 0);
-		for (size_t i = 0; i < it->ignoreCount; ++i) {
+		for (size_t i = 0; i < givenIgnores; ++i) {
 			it->ignores[i].start = ntohl(ip4SubnetStart(avoidSubnets[i]));
 			it->ignores[i].end = ntohl(ip4SubnetEnd(avoidSubnets[i]));
+		}
+		if (needToExclude) {
+			size_t i = givenIgnores;
+			it->ignores[i].start = ntohl(ip4SubnetStart(subnet));
+			it->ignores[i].end = it->ignores[i].start;
+			it->ignores[i+1].start = ntohl(ip4SubnetEnd(subnet));
+			it->ignores[i+1].end = it->ignores[i+1].start;
 		}
 		qsort(it->ignores, it->ignoreCount, sizeof(ignoreRange), &ignoreRangeCompare);
 	}

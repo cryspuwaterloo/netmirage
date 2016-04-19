@@ -1,7 +1,7 @@
 Import('env')
 env = env.Clone()
 
-#env.Append(LIBS = 'm')
+env.Append(LIBS = 'm')
 
 Import('verObj')
 env.Append(CPPPATH = '../auto')
