@@ -208,3 +208,41 @@ well; be sure to grep).
 A veth pair that has both of its interfaces in the same network namespace will
 ignore all traffic control settings applied to it. This issue mostly affects
 developers during debugging and testing.
+
+
+GENERAL
+=======
+1. IP address binding
+---------------------
+Policy-based routing in Linux is a system that allows IP routing based on source
+attributes (e.g., soure address or interface). This is implemented by having
+multiple routing tables, and a "rules" table. Each rule in the rules table
+consists of a selector, which specifies source attributes of packets, and an
+action. Rules are evaluated in order of priority. When a matching rule is found,
+its actions are executed. One of the most basic actions specifies a routing
+table number; when triggered, the kernel will consult that table and process
+routes in the usual way.
+
+We use policy-based routing in client nodes (part of the core) and edge nodes.
+For edge nodes, we want to achieve three goals:
+1. Packets sent to the virtual subnet should be sent out the physical interface
+   and routed to the core node.
+2. Packets sent to the virtual subnet, but received from the physical interface,
+   should be handled locally.
+3. Applications should be able to bind to the allocated addresses in the virtual
+   subnet.
+
+There are many different ways to achieve this (a web search for avoiding the
+loopback interface will return many techniques). However, the most common
+technique, which involves moving the "local" route out of the local routing
+table and into a custom one, does not achieve goal 3 (i.e., we lose the ability
+to bind to the addresses). This is because the kernel does not follow the
+policy-based routing rules when deciding whether or not we "own" an address;
+only "local" routes in the local routing table are meaningful for this purpose.
+
+To achieve all three goals, we need to add a rule with a higher priority than
+the default one for the local routing table (priority 0). Many sites on the web
+say that it is not possible to delete this rule (e.g., "sudo ip rule del pref
+0"). This does work, but be warned: if another rule for local routing does not
+exist, the outcome will be extremely destructive. At a minimum, it will
+disconnect any SSH users!
