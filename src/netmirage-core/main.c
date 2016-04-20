@@ -70,7 +70,7 @@ static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macS
 	return true;
 }
 
-static error_t parseArg(int key, char* arg, struct argp_state* state) {
+static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned int argNum) {
 	switch (key) {
 	case 'd': args.params.destroyFirst = true; break;
 	case 'f': args.params.srcFile = arg; break;
@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
 
 	int err = 0;
 
-	err = appParseArgs(&parseArg, &readSetupEdges, &argp, "emulator", 's', 'l', 'v', argc, argv);
+	err = appParseArgs(&parseArg, &readSetupEdges, &argp, "emulator", NULL, 's', 'l', 'v', argc, argv);
 	if (err != 0) goto cleanup;
 
 	lprintf(LogInfo, "Starting NetMirage Core %s\n", getVersion());

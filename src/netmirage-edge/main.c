@@ -34,6 +34,7 @@ static struct {
 	bool remove;
 } args;
 
+static uint8_t seenNonOptions;
 static bool netInitialized = false;
 static netContext* net;
 static int intfIdx;
@@ -45,7 +46,9 @@ static int intfIdx;
 #define RULE_PRIORITY_OTHER 15
 #define OUTGOING_TABLE_ID 128
 
-static error_t parseArg(int key, char* arg, struct argp_state* state) {
+#define KEY_FILE_GROUP "edge"
+
+static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned int argNum) {
 	switch (key) {
 	case 'n': {
 		ip4Subnet edgeNet;
@@ -73,13 +76,8 @@ static error_t parseArg(int key, char* arg, struct argp_state* state) {
 		break;
 
 	case ARGP_KEY_ARG:
-		if (state == NULL) {
-			lprintln(LogError, "Found ARGP_KEY_ARG in setup file (potential attack)!");
-			return 1;
-		}
-		switch (state->arg_num) {
+		switch (argNum) {
 		case 0: // IFACE
-			lprintf(LogDebug, "WRITING %p: %s\n", arg, arg);
 			args.intfName = arg;
 			break;
 		case 1: // COREIP
@@ -98,11 +96,7 @@ static error_t parseArg(int key, char* arg, struct argp_state* state) {
 			break;
 		default: return ARGP_ERR_UNKNOWN;
 		}
-		break;
-	case ARGP_KEY_END:
-		if (state->arg_num != 4) {
-			return 1;
-		}
+		++seenNonOptions;
 		break;
 	default: return ARGP_ERR_UNKNOWN;
 	}
@@ -192,6 +186,12 @@ static int applyConfiguration(void) {
 
 	// First we configure a custom table with rules to send packets to the core
 	err = netModifyRoute(net, args.remove, args.outgoingTableId, ScopeGlobal, CreatorAdmin, args.myNet.addr, args.myNet.prefixLen, args.coreIp, intfIdx, true);
+	if (err != 0 && !args.remove) return err;
+
+	for (size_t i = 0; i < args.edgeNetCount; ++i) {
+		err = netModifyRoute(net, args.remove, args.outgoingTableId, ScopeGlobal, CreatorAdmin, args.edgeNets[i].addr, args.edgeNets[i].prefixLen, args.coreIp, intfIdx, true);
+		if (err != 0 && !args.remove) return err;
+	}
 
 	// We need to decrease the default priority of the local routing table. We
 	// need to maintain the local routes in the local table in order for
@@ -244,8 +244,6 @@ static int applyConfiguration(void) {
 }
 
 static void cleanupOperations(void) {
-	lprintln(LogDebug, "Performing cleanup operations");
-
 	if (net != NULL) netCloseNamespace(net, false);
 	if (netInitialized) netCleanup();
 }
@@ -255,7 +253,7 @@ int main(int argc, char** argv) {
 
 	// Command-line switch definitions
 	struct argp_option generalOptions[] = {
-			{ "vsubnet",    'n', "CIDR", 0, "Specifies a subnet that belongs to the NetMirage virtual address space. Any traffic to this subnet will be routed through the core node.", 0 },
+			{ "other-edge",    'n', "CIDR", 0, "Specifies a subnet that belongs to the NetMirage virtual address space. Any traffic to this subnet will be routed through the core node.", 0 },
 
 			{ "remove",     'r', NULL, OPTION_ARG_OPTIONAL, "If specified, the program will attempt to remove a previously created configuration. No new routes will be configured. Note that the program must be called with the exact same network configuration that was used to create the previous setup.", 1 },
 
@@ -267,11 +265,12 @@ int main(int argc, char** argv) {
 			{ "rule-other", 'h', "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 3 },
 			{ "table-id",   't', "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 3 },
 
-			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 4 },
+			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"clients\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 4 },
 
 			{ NULL },
 	};
 	struct argp argp = { generalOptions, &appParseArg, "IFACE COREIP VSUBNET CLIENTS", "Configures a NetMirage edge node.\vIFACE specifies the network interface connected to the NetMirage core node, and COREIP is the IP address of the core node.\n\nVSUBNET is the subnet, in CIDR notation, assigned to this edge node by the core (obtained from the output of the netmirage-core command). This subnet is automatically considered part of the virtual range, so there is no need to explicitly specify it using a --vsubnet argument.\n\nCLIENTS is the number of IP addresses that should be allocated for applications. To allocate all available addresses in the subnet, specify \"max\" for CLIENTS." };
+	const char* nonOptions[] = { "iface", "core-ip", "vsubnet", "clients", NULL };
 
 	// Defaults
 	args.remove = false;
@@ -283,8 +282,13 @@ int main(int argc, char** argv) {
 
 	int err = 0;
 
-	err = appParseArgs(&parseArg, NULL, &argp, "edge", 's', 'l', 'v', argc, argv);
+	err = appParseArgs(&parseArg, NULL, &argp, KEY_FILE_GROUP, nonOptions, 's', 'l', 'v', argc, argv);
 	if (err != 0) goto cleanup;
+
+	if (seenNonOptions != 4) {
+		argp_help(&argp, stderr, ARGP_HELP_STD_USAGE, argv[0]);
+		goto cleanup;
+	}
 
 	lprintf(LogInfo, "Starting NetMirage Edge %s\n", getVersion());
 

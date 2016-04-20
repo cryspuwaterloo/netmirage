@@ -33,7 +33,7 @@ static int appVerbosityKey;
 static argp_parser_t argParser;
 
 // Callbacks provided by the user
-static argp_parser_t appCurrentArgParser;
+static appArgParser appCurrentArgParser;
 static appSetupParser appCurrentSetupParser;
 
 // Name of the setup file
@@ -80,6 +80,13 @@ static error_t findSetupFile(int key, char* arg, struct argp_state* state) {
 	return 0;
 }
 
+static char* duplicateArg(char* arg) {
+	char* argCopy = strdup(arg);
+	flexBufferGrow((void**)&argBuf, argBufLen, &argBufCap, 1, sizeof(char*));
+	flexBufferAppend(argBuf, &argBufLen, &argCopy, 1, sizeof(char*));
+	return argCopy;
+}
+
 // Parsing hook for argp that duplicates strings and relays events to the user's
 // callback function.
 static error_t redirectDupArg(int key, char* arg, struct argp_state* state) {
@@ -87,9 +94,7 @@ static error_t redirectDupArg(int key, char* arg, struct argp_state* state) {
 
 	char* argCopy = NULL;
 	if (arg != NULL) {
-		argCopy = strdup(arg);
-		flexBufferGrow((void**)&argBuf, argBufLen, &argBufCap, 1, sizeof(char*));
-		flexBufferAppend(argBuf, &argBufLen, &argCopy, 1, sizeof(char*));
+		argCopy = duplicateArg(arg);
 
 		// We can handle some flags ourself, without resorting to telling the caller
 		if (key == appLogFileKey) {
@@ -109,12 +114,12 @@ static error_t redirectDupArg(int key, char* arg, struct argp_state* state) {
 		}
 	}
 
-	return appCurrentArgParser(key, argCopy, state);
+	return appCurrentArgParser(key, argCopy, state, (state == NULL ? 0 : state->arg_num));
 }
 
 // Reads argp configuration settings from the setup key-value file. Returns true
 // on success or false on failure.
-static bool parseSetupEmulatorOptions(GKeyFile* f, const struct argp* argp) {
+static bool parseSetupAppOptions(GKeyFile* f, const struct argp* argp, const char** nonOptions) {
 	if (argp->options != NULL) {
 		for (const struct argp_option* option = argp->options; option->name != NULL || option->key != 0; ++option) {
 			if (option->name == NULL) continue;
@@ -122,16 +127,32 @@ static bool parseSetupEmulatorOptions(GKeyFile* f, const struct argp* argp) {
 			gchar* val = g_key_file_get_string(f, appSetupOptGroup, option->name, NULL);
 			if (val == NULL) continue;
 			error_t err = redirectDupArg(option->key, val, NULL);
+			g_free(val);
 			if (err != 0 && err != ARGP_ERR_UNKNOWN) {
-				fprintf(stderr, "In setup file: the configuration for emulator flag \"%s\" was invalid: %s\n", option->name, strerror(err));
+				fprintf(stderr, "In setup file: the configuration for application option \"%s\" was invalid: %s\n", option->name, strerror(err));
 				return false;
 			}
-			g_free(val);
 		}
 	}
 	if (argp->children != NULL) {
 		for (const struct argp_child* child = argp->children; child->argp != NULL; ++child) {
-			if (!parseSetupEmulatorOptions(f, child->argp)) return false;
+			if (!parseSetupAppOptions(f, child->argp, NULL)) return false;
+		}
+	}
+	if (nonOptions != NULL) {
+		unsigned int argNum = 0;
+		for (const char** nonOption = nonOptions; *nonOption != NULL; ++nonOption, ++argNum) {
+			const char* longName = *nonOption;
+			gchar* val = g_key_file_get_string(f, appSetupOptGroup, longName, NULL);
+			if (val == NULL) continue;
+
+			char* argCopy = duplicateArg((char*)val);
+			g_free(val);
+			error_t err = appCurrentArgParser(ARGP_KEY_ARG, argCopy, NULL, argNum);
+			if (err != 0) {
+				fprintf(stderr, "In setup file: the configuration for application non-option argument \"%s\" was invalid: %s\n", longName, strerror(err));
+				return false;
+			}
 		}
 	}
 	return true;
@@ -139,7 +160,7 @@ static bool parseSetupEmulatorOptions(GKeyFile* f, const struct argp* argp) {
 
 // Tries to parse the options in a setup file specified in args.setupFile.
 // Updates the settings in args. Returns true on success or false on failure.
-static bool parseSetupFile(const struct argp* argp, bool mustExist) {
+static bool parseSetupFile(const struct argp* argp, bool mustExist, const char** nonOptions) {
 	GError* gerr = NULL;
 	bool res = false;
 
@@ -159,10 +180,13 @@ static bool parseSetupFile(const struct argp* argp, bool mustExist) {
 	}
 
 	if (appCurrentSetupParser != NULL) {
-		if (!appCurrentSetupParser(f)) goto cleanup;
+		if (!appCurrentSetupParser(f)) {
+			res = 1;
+			goto cleanup;
+		}
 	}
 
-	res = parseSetupEmulatorOptions(f, argp);
+	res = parseSetupAppOptions(f, argp, nonOptions);
 
 cleanup:
 	if (gerr != NULL) g_error_free(gerr);
@@ -171,7 +195,7 @@ cleanup:
 	return res;
 }
 
-int appParseArgs(argp_parser_t parser, appSetupParser setupParser, struct argp* argp, const char* setupOptGroup, int setupKey, int logFileKey, int verbosityKey, int argc, char** argv) {
+int appParseArgs(appArgParser parser, appSetupParser setupParser, struct argp* argp, const char* setupOptGroup, const char** nonOptions, int setupKey, int logFileKey, int verbosityKey, int argc, char** argv) {
 	appCurrentArgParser = parser;
 	appCurrentSetupParser = setupParser;
 	appSetupOptGroup = setupOptGroup;
@@ -191,7 +215,7 @@ int appParseArgs(argp_parser_t parser, appSetupParser setupParser, struct argp* 
 	// Setup file settings have higher priority than defaults. If we are using
 	// the default setup file, we don't care if it doesn't exist.
 	argParser = &redirectDupArg;
-	bool setupSuccess = parseSetupFile(argp, explicitSetupFile);
+	bool setupSuccess = parseSetupFile(argp, explicitSetupFile, nonOptions);
 	if (explicitSetupFile && !setupSuccess) return 1;
 
 	// Now parse the arguments again (explicit arguments have higher priority
