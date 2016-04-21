@@ -20,6 +20,9 @@ typedef struct {
 
 	bool vsubnetSpecified;
 	ip4Subnet vsubnet;     // The subnet for virtual clients in the edge node
+
+	char* remoteDev;       // The interface on the edge node
+	uint32_t remoteApps;   // The number of remote applications to configure
 } edgeNodeParams;
 
 typedef struct {
@@ -32,6 +35,12 @@ typedef struct {
 	// srcFile is the path to a file containing the network topology in the
 	// appropriate format. If it is NULL, then stdin is used instead.
 	const char* srcFile;
+
+	ip4Addr routingIp;
+
+	// edgeFile is a path to a file to which edge settings will be written, or
+	// "-" to indicate stdout.
+	const char* edgeFile;
 
 	edgeNodeParams* edgeNodes;
 	size_t edgeNodeCount;

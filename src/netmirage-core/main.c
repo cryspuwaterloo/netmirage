@@ -44,7 +44,7 @@ static const float ModelNetDivisor = 1000.f; // Kb/s
 #define DEFAULT_OVS_DIR    "/tmp/netmirage"
 
 // Adds an edge node based on strings, which may be NULL
-static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macStr, const char* vsubnetStr) {
+static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macStr, const char* vsubnetStr, const char* remoteDev, const char* remoteApps) {
 	edgeNodeParams params;
 	if (!ip4GetAddr(ipStr, &params.ip)) return false;
 
@@ -64,6 +64,16 @@ static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macS
 	params.vsubnetSpecified = (vsubnetStr != NULL);
 	if (params.vsubnetSpecified) {
 		if (!ip4GetSubnet(vsubnetStr, &params.vsubnet)) return false;
+	}
+	if (remoteDev == NULL) {
+		params.remoteDev = NULL;
+	} else {
+		params.remoteDev = eamalloc(strlen(remoteDev), 1, 1);
+		strcpy(params.remoteDev, remoteDev);
+	}
+	params.remoteApps = 0;
+	if (remoteApps != NULL) {
+		sscanf(remoteApps, "%u", &params.remoteApps);
 	}
 	flexBufferGrow((void**)&args.params.edgeNodes, args.params.edgeNodeCount, &args.edgeNodeCap, 1, sizeof(edgeNodeParams));
 	flexBufferAppend(args.params.edgeNodes, &args.params.edgeNodeCount, &params, 1, sizeof(edgeNodeParams));
@@ -104,6 +114,8 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 		char* intf = NULL;
 		char* mac = NULL;
 		char* vsubnet = NULL;
+		char* rdev = NULL;
+		char* rapps = NULL;
 
 		char* optionSep = arg;
 		while (true) {
@@ -132,6 +144,10 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 				mac = keyValSep+1;
 			} else if (strncmp(optionSep, "vsubnet", cmpLen) == 0) {
 				vsubnet = keyValSep+1;
+			} else if (strncmp(optionSep, "rdev", cmpLen) == 0) {
+				rdev = keyValSep+1;
+			} else if (strncmp(optionSep, "rapps", cmpLen) == 0) {
+				rapps = keyValSep+1;
 			} else {
 				*keyValSep = '\0';
 				fprintf(stderr, "Unknown option '%s' in edge node argument '%s'\n", optionSep, arg);
@@ -139,12 +155,20 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 			}
 		}
 
-		if (!addEdgeNode(ip, intf, mac, vsubnet)) {
+		if (!addEdgeNode(ip, intf, mac, vsubnet, rdev, rapps)) {
 			fprintf(stderr, "Edge node argument '%s' was invalid\n", arg);
 			return EINVAL;
 		}
 		break;
 	}
+
+	case 'g':
+		if (!ip4GetAddr(arg, &args.params.routingIp)) {
+			fprintf(stderr, "Invalid routing IP address specified: '%s'\n", arg);
+			return EINVAL;
+		}
+		break;
+	case 'o': args.params.edgeFile = arg; break;
 
 	case 'p': args.params.nsPrefix = arg; break;
 
@@ -181,12 +205,16 @@ static bool readSetupEdges(GKeyFile* file) {
 			char* intf = g_key_file_get_string(file, group, "iface", NULL);
 			char* mac = g_key_file_get_string(file, group, "mac", NULL);
 			char* vsubnet = g_key_file_get_string(file, group, "vsubnet", NULL);
-			bool added = addEdgeNode(ip, intf, mac, vsubnet);
+			char* rdev = g_key_file_get_string(file, group, "rdev", NULL);
+			char* rapps = g_key_file_get_string(file, group, "rapps", NULL);
+			bool added = addEdgeNode(ip, intf, mac, vsubnet, rdev, rapps);
 
 			g_free(ip);
 			g_free(intf);
 			g_free(mac);
 			g_free(vsubnet);
+			g_free(rdev);
+			g_free(rapps);
 
 			if (!added) {
 				fprintf(stderr, "In setup file: invalid configuration for edge node '%s'\n", group);
@@ -219,18 +247,21 @@ int main(int argc, char** argv) {
 			{ "file",         'f', "FILE", 0,                   "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
 			{ "setup-file",   's', "FILE", 0,                   "The file containing setup information about edge nodes and emulator interfaces. This file is a key-value file (similar to an .ini file). Every group whose name begins with \"edge\" or \"node\" denotes the configuration for an edge node. The keys and values permitted in an edge node group are the same as those in an --edge-node argument. There may also be an \"emulator\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 0 },
 
-			{ "iface",        'i', "DEVNAME",                                     0, "Default interface connected to the edge nodes. Individual edge nodes can override this setting in the setup file or as part of the --edge-nodes argument.", 1 },
-			{ "vsubnet",      'n', "CIDR",                                        0, "The global subnet to which all virtual clients belong. By default, each edge node is given a fragment of this global subnet in which to spawn clients. Subnets for edge nodes can also be manually assigned rather than drawing them from this larger space. The default value is " DEFAULT_CLIENTS_SUBNET ".", 1 },
-			{ "edge-node",    'e', "IP[,iface=DEVNAME][,mac=MAC][,vsubnet=CIDR]", 0, "Adds an edge node to the configuration. The presence of an --edge-node argument causes all edge node configuration in the setup file to be ignored. The node's IPv4 address must be specified. If the optional \"iface\" portion is specified, it lists the interface connected to the edge node (if omitted, --iface is used). \"mac\" specifies the MAC address of the node (if omitted, it is found using ARP). \"vsubnet\" specifies the subnet, in CIDR notation, for clients in the edge node (if omitted, a subnet is assigned automatically from the --vsubnet range).", 1 },
+			{ "iface",        'i', "DEVNAME",                                                                  0, "Default interface connected to the edge nodes. Individual edge nodes can override this setting in the setup file or as part of the --edge-nodes argument.", 1 },
+			{ "vsubnet",      'n', "CIDR",                                                                     0, "The global subnet to which all virtual clients belong. By default, each edge node is given a fragment of this global subnet in which to spawn clients. Subnets for edge nodes can also be manually assigned rather than drawing them from this larger space. The default value is " DEFAULT_CLIENTS_SUBNET ".", 1 },
+			{ "edge-node",    'e', "IP[,iface=DEVNAME][,mac=MAC][,vsubnet=CIDR][,rdev=DEVNAME][,rapps=COUNT]", 0, "Adds an edge node to the configuration. The presence of an --edge-node argument causes all edge node configuration in the setup file to be ignored. The node's IPv4 address must be specified. If the optional \"iface\" portion is specified, it lists the interface connected to the edge node (if omitted, --iface is used). \"mac\" specifies the MAC address of the node (if omitted, it is found using ARP). \"vsubnet\" specifies the subnet, in CIDR notation, for clients in the edge node (if omitted, a subnet is assigned automatically from the --vsubnet range). \"rdev\" refers to the interface on the remote machine that is connected to this machine; this is only used when producing edge node commands using --edge-output. Similarly, \"rapps\" specifies the number of remote applications to configure in the edge node commands.", 1 },
 
-			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 2 },
-			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 2 },
+			{ "routing-ip",   'g', "IP",   0, "The IP address that edge nodes should use to communicate with the core. This value is only used for generating edge node commands with --edge-output.", 2 },
+			{ "edge-output",  'o', "FILE", 0, "If specified, commands for instantiating the edge nodes are written to the given file. A value of \"-\" specifies stdout. These commands should be executed on the edge nodes to connect them with the core.", 2 },
 
-			{ "netns-prefix", 'p', "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 3 },
-			{ "ovs-dir",      'r', "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 3 },
-			{ "ovs-schema",   'a', "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 3 },
+			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
+			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 3 },
 
-			{ "mem",          'm', "MiB",    0, "Approximate maximum memory use, specified in MiB. The program may use more than this amount if needed.", 4 },
+			{ "netns-prefix", 'p', "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 4 },
+			{ "ovs-dir",      'r', "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 4 },
+			{ "ovs-schema",   'a', "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 4 },
+
+			{ "mem",          'm', "MiB",    0, "Approximate maximum memory use, specified in MiB. The program may use more than this amount if needed.", 5 },
 
 			// File-specific options get priorities [50 - 99]
 
@@ -294,6 +325,7 @@ cleanup:
 		for (size_t i = 0; i < args.params.edgeNodeCount; ++i) {
 			edgeNodeParams* edge = &args.params.edgeNodes[i];
 			if (edge->intf != NULL) free(edge->intf);
+			if (edge->remoteDev != NULL) free(edge->remoteDev);
 		}
 	}
 	flexBufferFree((void**)&args.params.edgeNodes, &args.params.edgeNodeCount, &args.edgeNodeCap);

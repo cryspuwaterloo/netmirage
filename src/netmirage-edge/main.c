@@ -1,5 +1,7 @@
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <argp.h>
@@ -39,6 +41,8 @@ static uint8_t seenNonOptions;
 static bool netInitialized = false;
 static netContext* net = NULL;
 static int intfIdx;
+static FILE* ipFile = NULL;
+static bool ipFileOpened = false;
 static ip4Iter** clientIters = NULL;
 static size_t currentClient;
 
@@ -67,6 +71,24 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 
 	case 'r':
 		args.remove = true;
+		break;
+
+	case 'p':
+		if (ipFileOpened) {
+			fclose(ipFile);
+			ipFileOpened = false;
+		}
+		if (strcmp(arg, "-") == 0) {
+			ipFile = stdout;
+		} else {
+			errno = 0;
+			ipFile = fopen(arg, "w");
+			if (ipFile == NULL) {
+				lprintf(LogError, "Failed to open IP file \"%s\": %s\n", arg, strerror(errno));
+				return 1;
+			}
+			ipFileOpened = true;
+		}
 		break;
 
 	case 'i':
@@ -233,6 +255,12 @@ static int applyConfiguration(void) {
 
 			err = netModifyInterfaceAddrIPv4(net, false, intfIdx, appIp, args.myNet.prefixLen, 0, 0, true);
 			if (err != 0) break;
+
+			if (ipFile != NULL) {
+				char appIpStr[IP4_ADDR_BUFLEN];
+				ip4AddrToString(appIp, appIpStr);
+				fprintf(ipFile, "%s\n", appIpStr);
+			}
 		}
 	}
 	if (err != 0 && !args.remove) return err;
@@ -322,15 +350,17 @@ int main(int argc, char** argv) {
 
 			{ "remove",     'r', NULL, OPTION_ARG_OPTIONAL, "If specified, the program will attempt to remove a previously created configuration. No new routes will be configured. Note that the program must be called with the exact same network configuration that was used to create the previous setup.", 1 },
 
-			{ "verbosity",  'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 2 },
-			{ "log-file",   'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors may still be written to stderr.", 2 },
+			{ "ip-file",    'p', "FILE", 0, "If specified, IP addresses allocated for applications are written to this file (one per line). A value of \"-\" indicates that the addresses should be written to stdout.", 2 },
 
-			{ "rule-in",    'i', "PRIORITY", 0, "Optional routing rule priority for incoming packets.", 3 },
-			{ "rule-out",   'o', "PRIORITY", 0, "Optional routing rule priority for outgoing packets.", 3 },
-			{ "rule-other", 'h', "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 3 },
-			{ "table-id",   't', "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 3 },
+			{ "verbosity",  'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
+			{ "log-file",   'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors may still be written to stderr.", 3 },
 
-			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"clients\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 4 },
+			{ "rule-in",    'i', "PRIORITY", 0, "Optional routing rule priority for incoming packets.", 4 },
+			{ "rule-out",   'o', "PRIORITY", 0, "Optional routing rule priority for outgoing packets.", 4 },
+			{ "rule-other", 'h', "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 4 },
+			{ "table-id",   't', "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 4 },
+
+			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"clients\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 5 },
 
 			{ NULL },
 	};
@@ -376,6 +406,7 @@ cleanup:
 	cleanupOperations();
 
 	flexBufferFree(&args.netBuf, &args.edgeNetCount, &args.netBufCap);
+	if (ipFileOpened) fclose(ipFile);
 
 	appCleanup();
 	return err;

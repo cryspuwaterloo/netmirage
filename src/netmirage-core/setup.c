@@ -2,6 +2,7 @@
 
 #include "setup.h"
 
+#include <errno.h>
 #include <fenv.h>
 #include <math.h>
 #include <stdbool.h>
@@ -20,7 +21,10 @@
 #include "topology.h"
 #include "work.h"
 
-static const setupParams* globalParams;
+static const setupParams* globalParams = NULL;
+
+static bool edgeFileOpened = false;
+static FILE* edgeFile = NULL;
 
 #define DO_OR_GOTO(stmt, label, res) do{ \
 	res = (stmt); \
@@ -117,11 +121,30 @@ int setupConfigure(const setupParams* params) {
 	}
 	if (subnetErr) return 1;
 
+	if (params->edgeFile != NULL) {
+		if (strcmp(params->edgeFile, "-") == 0) {
+			edgeFile = stdout;
+			lprintln(LogDebug, "Writing edge node commands to stdout");
+		} else {
+			errno = 0;
+			edgeFile = fopen(params->edgeFile, "w");
+			if (edgeFile == NULL) {
+				lprintf(LogError, "Failed to open edge node command file \"%s\": %s\n", edgeFile, strerror(errno));
+				return 1;
+			}
+			edgeFileOpened = true;
+			lprintf(LogDebug, "Writing edge node commands to '%s'\n", params->edgeFile);
+		}
+	}
+
 	return 0;
 }
 
 int setupCleanup(void) {
 	DO_OR_RETURN(workCleanup());
+	if (edgeFileOpened) {
+		fclose(edgeFile);
+	}
 	return 0;
 }
 
@@ -332,6 +355,39 @@ static bool gmlNextEdge(gmlContext* ctx) {
 		ip4SubnetToString(&edge->vsubnet, edgeSubnet);
 		lprintf(LogDebug, "Now allocating %u client subnets for edge %s (range %s)\n", currentEdgeCapacity, edgeIp, edgeSubnet);
 	}
+
+	if (edgeFile != NULL) {
+		fprintf(edgeFile, "netmirage-edge");
+		for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
+			edgeNodeParams* otherEdge = &globalParams->edgeNodes[i];
+			char otherEdgeSubnet[IP4_CIDR_BUFLEN];
+			ip4SubnetToString(&otherEdge->vsubnet, otherEdgeSubnet);
+			fprintf(edgeFile, " -n %s", otherEdgeSubnet);
+		}
+		fprintf(edgeFile, " -c %u", currentEdgeCapacity);
+		if (edge->remoteDev == NULL) {
+			fprintf(edgeFile, " <iface>");
+		} else {
+			fprintf(edgeFile, " %s", edge->remoteDev);
+		}
+		if (globalParams->routingIp == 0) {
+			fprintf(edgeFile, " <core-ip>");
+		} else {
+			char routingIpStr[IP4_ADDR_BUFLEN];
+			ip4AddrToString(globalParams->routingIp, routingIpStr);
+			fprintf(edgeFile, " %s", routingIpStr);
+		}
+		char edgeSubnet[IP4_CIDR_BUFLEN];
+		ip4SubnetToString(&edge->vsubnet, edgeSubnet);
+		fprintf(edgeFile, " %s", edgeSubnet);
+		if (edge->remoteApps == 0) {
+			fprintf(edgeFile, " <applications>");
+		} else {
+			fprintf(edgeFile, " %u", edge->remoteApps);
+		}
+		fprintf(edgeFile, "\n");
+	}
+
 	return true;
 }
 
