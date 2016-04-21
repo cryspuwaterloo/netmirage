@@ -169,6 +169,7 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 		}
 		break;
 	case 'o': args.params.edgeFile = arg; break;
+	case 'q': args.params.quiet = true; break;
 
 	case 'p': args.params.nsPrefix = arg; break;
 
@@ -251,8 +252,9 @@ int main(int argc, char** argv) {
 			{ "vsubnet",      'n', "CIDR",                                                                     0, "The global subnet to which all virtual clients belong. By default, each edge node is given a fragment of this global subnet in which to spawn clients. Subnets for edge nodes can also be manually assigned rather than drawing them from this larger space. The default value is " DEFAULT_CLIENTS_SUBNET ".", 1 },
 			{ "edge-node",    'e', "IP[,iface=DEVNAME][,mac=MAC][,vsubnet=CIDR][,rdev=DEVNAME][,rapps=COUNT]", 0, "Adds an edge node to the configuration. The presence of an --edge-node argument causes all edge node configuration in the setup file to be ignored. The node's IPv4 address must be specified. If the optional \"iface\" portion is specified, it lists the interface connected to the edge node (if omitted, --iface is used). \"mac\" specifies the MAC address of the node (if omitted, it is found using ARP). \"vsubnet\" specifies the subnet, in CIDR notation, for clients in the edge node (if omitted, a subnet is assigned automatically from the --vsubnet range). \"rdev\" refers to the interface on the remote machine that is connected to this machine; this is only used when producing edge node commands using --edge-output. Similarly, \"rapps\" specifies the number of remote applications to configure in the edge node commands.", 1 },
 
-			{ "routing-ip",   'g', "IP",   0, "The IP address that edge nodes should use to communicate with the core. This value is only used for generating edge node commands with --edge-output.", 2 },
-			{ "edge-output",  'o', "FILE", 0, "If specified, commands for instantiating the edge nodes are written to the given file. A value of \"-\" specifies stdout. These commands should be executed on the edge nodes to connect them with the core.", 2 },
+			{ "routing-ip",   'g', "IP",   0,                   "The IP address that edge nodes should use to communicate with the core. This value is only used for generating edge node commands with --edge-output.", 2 },
+			{ "edge-output",  'o', "FILE", 0,                   "If specified, commands for instantiating the edge nodes are written to the given file instead of stdout. These commands should be executed on the edge nodes to connect them with the core.", 2 },
+			{ "quiet",        'q', NULL,   OPTION_ARG_OPTIONAL, "If specified, no edge information is written to stdout.", 2 },
 
 			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
 			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 3 },
@@ -291,6 +293,7 @@ int main(int argc, char** argv) {
 	args.params.ovsDir = DEFAULT_OVS_DIR;
 	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
 	args.params.destroyFirst = false;
+	args.params.quiet = false;
 	ip4GetSubnet(DEFAULT_CLIENTS_SUBNET, &args.params.edgeNodeDefaults.globalVSubnet);
 	args.gmlParams.bandwidthDivisor = ShadowDivisor;
 	args.gmlParams.weightKey = "latency";

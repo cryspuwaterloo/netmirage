@@ -121,8 +121,8 @@ int setupConfigure(const setupParams* params) {
 	}
 	if (subnetErr) return 1;
 
-	if (params->edgeFile != NULL) {
-		if (strcmp(params->edgeFile, "-") == 0) {
+	if (!params->quiet) {
+		if (params->edgeFile == NULL) {
 			edgeFile = stdout;
 			lprintln(LogDebug, "Writing edge node commands to stdout");
 		} else {

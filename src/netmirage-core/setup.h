@@ -39,8 +39,9 @@ typedef struct {
 	ip4Addr routingIp;
 
 	// edgeFile is a path to a file to which edge settings will be written, or
-	// "-" to indicate stdout.
+	// NULL to indicate stdout.
 	const char* edgeFile;
+	bool quiet; // If true, edge information is not written
 
 	edgeNodeParams* edgeNodes;
 	size_t edgeNodeCount;
