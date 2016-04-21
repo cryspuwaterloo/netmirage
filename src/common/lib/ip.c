@@ -92,6 +92,10 @@ uint64_t ip4SubnetSize(const ip4Subnet* subnet, bool excludeReserved) {
 	return count;
 }
 
+bool ip4SubnetHasReserved(const ip4Subnet* subnet) {
+	return (subnet->prefixLen <= 30);
+}
+
 int ip4SubnetToString(const ip4Subnet* subnet, char* buffer) {
 	char ip[IP4_ADDR_BUFLEN];
 	int res = ip4AddrToString(subnet->addr, ip);
@@ -136,7 +140,7 @@ struct ip4Iter_s {
 };
 
 ip4Iter* ip4NewIter(const ip4Subnet* subnet, bool excludeReserved, const ip4Subnet** avoidSubnets) {
-	bool needToExclude = excludeReserved && (subnet->prefixLen <= 30);
+	bool needToExclude = excludeReserved && ip4SubnetHasReserved(subnet);
 
 	ip4Iter* it = emalloc(sizeof(ip4Iter));
 	it->currentAddr = (int64_t)(ntohl(ip4SubnetStart(subnet)))-1;
@@ -148,6 +152,7 @@ ip4Iter* ip4NewIter(const ip4Subnet* subnet, bool excludeReserved, const ip4Subn
 		}
 	}
 	if (!needToExclude && givenIgnores == 0) {
+		it->ignoreCount = 0;
 		it->ignores = NULL;
 	} else {
 		it->ignoreCount = givenIgnores + (needToExclude ? 2 : 0);
