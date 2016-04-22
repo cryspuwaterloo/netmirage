@@ -39,7 +39,13 @@ static appSetupParser appCurrentSetupParser;
 // Name of the setup file
 static const char* argSetupFile;
 
+static void argpVersion(FILE* stream, struct argp_state* state) {
+	fprintf(stream, "%s %s\n", appProductName, appProductVersion);
+}
+
 void appInit(const char* productName, const char* productVersion) {
+	argp_program_version_hook = &argpVersion;
+
 	// If any errors appear during startup, we send them to stderr. However, our
 	// convention is to print directly to stderr without logging decoration for
 	// configuration errors.
@@ -60,11 +66,6 @@ void appCleanup(void) {
 
 	logCleanup();
 }
-
-static void argpVersion(FILE* stream, struct argp_state* state) {
-	fprintf(stream, "%s %s\n", appProductName, appProductVersion);
-}
-void (*argp_program_version_hook)(FILE*, struct argp_state*) = &argpVersion;
 
 error_t appParseArg(int key, char* arg, struct argp_state* state) {
 	return argParser(key, arg, state);
