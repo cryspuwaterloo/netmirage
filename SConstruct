@@ -42,3 +42,9 @@ SConscript('src/auto/SConstruct', variant_dir=buildDir+'/auto', duplicate=0)
 SConscript('src/common/SConstruct', variant_dir=buildDir+'/common', duplicate=0)
 SConscript('src/netmirage-core/SConstruct', variant_dir=buildDir+'/netmirage-core', duplicate=0)
 SConscript('src/netmirage-edge/SConstruct', variant_dir=buildDir+'/netmirage-edge', duplicate=0)
+
+# Configure the tarball build target
+tarEnv = Environment(TARFLAGS = '-c -z', TARSUFFIX = '.tar.gz')
+tarName = 'netmirage-%d.%d.%d'%(appVersion['major'],appVersion['minor'],appVersion['revision'])
+tarFiles = ['SConstruct', 'src']
+tarEnv.Tar(tarName, tarFiles)

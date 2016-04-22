@@ -1,6 +1,7 @@
 # Output
 build
 bin
+netmirage-*.tar.gz
 
 # Configuration
 setup.cfg
