@@ -87,6 +87,16 @@ int workerInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchem
 		return 1;
 	}
 	lprintf(LogDebug, "Using Open vSwitch version '%s'\n", ovsVer);
+	bool ovsNewEnough = false;
+	unsigned int ovsMajor, ovsMinor;
+	if (sscanf(ovsVer, "%u.%u.", &ovsMajor, &ovsMinor) == 2) {
+		if (ovsMajor > 2 || (ovsMajor == 2 && ovsMinor >= 1)) {
+			ovsNewEnough = true;
+		}
+	}
+	if (!ovsNewEnough) {
+		lprintf(LogWarning, "This program requires Open vSwitch 2.1.0 or later. You are using version '%s', which appears to be older. If an error occurs while setting up the switch, you will need to upgrade your version of Open vSwitch.\n", ovsVer);
+	}
 	free(ovsVer);
 
 	strncpy(ovsDir, ovsDirArg, PATH_MAX+1);
