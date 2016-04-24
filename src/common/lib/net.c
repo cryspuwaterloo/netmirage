@@ -703,8 +703,7 @@ static int netSearchAddr(const nlContext* ctx, const void* data, uint32_t len, u
 	for (const struct rtattr* rta = (const struct rtattr*)((const char*)data + NLMSG_ALIGN(sizeof(struct ifaddrmsg))); RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
 		if (rta->rta_type == IFA_ADDRESS) {
 			ip4Addr addr = *(uint32_t*)RTA_DATA(rta);
-			addrCtx->callback(addr, addrCtx->userData);
-			break;
+			return addrCtx->callback(addr, addrCtx->userData);
 		}
 	}
 	return 0;

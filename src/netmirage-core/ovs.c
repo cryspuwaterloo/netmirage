@@ -214,13 +214,14 @@ static int ovsModuleLoad(void) {
 			fclose(stdin);
 			fclose(stdout);
 			fclose(stderr);
-			execlp("modprobe", "modprobe", LKM_OVS_NAME);
-			exit(1);
+			errno = 0;
+			execlp("modprobe", "modprobe", LKM_OVS_NAME, NULL);
+			exit(errno);
 		}
 		int probeStatus;
 		waitpid(probePid, &probeStatus, 0);
 		if (!WIFEXITED(probeStatus) || WEXITSTATUS(probeStatus) != 0) {
-			lprintln(LogWarning, "The Open vSwitch kernel module could not be loaded. Unless this distribution uses a different name for the module, setting up the virtual switch will fail. The module will need to be loaded manually.");
+			lprintf(LogWarning, "The Open vSwitch kernel module could not be loaded (modprobe exit code %d). Unless this distribution uses a different name for the module, setting up the virtual switch will fail. The module will need to be loaded manually\n", WEXITSTATUS(probeStatus));
 			return 0;
 		}
 		lprintln(LogInfo, "The Open vSwitch kernel module was loaded successfully.");
