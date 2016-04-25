@@ -12,7 +12,7 @@ typedef struct ovsContext_s ovsContext;
 // Returns a human-readable version string for the Open vSwitch installation. If
 // Open vSwitch is not installed or is not accessible, returns NULL. The caller
 // is responsible for freeing this string.
-char* ovsVersion(void);
+char* ovsVersion(bool* validVersion, unsigned int* major, unsigned int* minor);
 
 // Starts up an isolated Open vSwitch instance in the given namespace. This
 // instance includes its own configuration database server and switching daemon.

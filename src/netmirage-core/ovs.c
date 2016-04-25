@@ -23,6 +23,7 @@ struct ovsContext_s {
 	const char* directory;
 	char* dbSocketConnArg;
 	char* actionBuffer; // Flexible buffer
+	const char* compatArgs;
 	size_t actionBufferCap;
 };
 
@@ -37,11 +38,6 @@ static int switchContext(ovsContext* ctx) {
 #define LKM_LIST_FILE "/proc/modules"
 #define LKM_OVS_NAME "openvswitch"
 
-// If this is not provided to most commands, the 2.5.0 branch crashes with an
-// assertion failure.
-// TODO: This is probably an OVS bug. Report it!
-#define OVS_COMMON_ARGS "--log-file=/dev/null"
-
 // Forks and executes an OVS command with the given arguments. The first
 // argument is automatically set to be the command. Must call switchContext
 // before this function. If output is non-NULL, output, outputLen, and
@@ -55,11 +51,16 @@ static int ovsCommandVArg(char** output, size_t* outputLen, size_t* outputCap, c
 	lprintHead(LogDebug);
 	argv[0] = command;
 	lprintDirectf(LogDebug, "Running Open vSwitch command: %s", command);
-	size_t argCount;
-	for (argCount = 1; argCount < OVS_CMD_MAX_ARGS+1; ++argCount) {
-		argv[argCount] = va_arg(args, char*); // Also a safe cast
-		if (argv[argCount] == NULL) break;
-		lprintDirectf(LogDebug, " \"%s\"", argv[argCount]);
+	size_t argCount = 1;
+	for (size_t i = 1; i < OVS_CMD_MAX_ARGS+1; ++i) {
+		char* nextArg = va_arg(args, char*); // Also a safe cast
+		if (nextArg == NULL) break;
+
+		// We ignore empty arguments (simplifies some other logic)
+		if (nextArg[0] != '\0') {
+			argv[argCount++] = nextArg;
+			lprintDirectf(LogDebug, " \"%s\"", nextArg);
+		}
 	}
 	va_end(args);
 	argv[argCount] = NULL;
@@ -157,7 +158,9 @@ static const char* ovsToolVersion(char** output, size_t* outputLen, size_t* outp
 	return p+1;
 }
 
-char* ovsVersion(void) {
+char* ovsVersion(bool* validVersion, unsigned int* major, unsigned int* minor) {
+	*validVersion = false;
+
 	char* output;
 	size_t outputLen, outputCap;
 	flexBufferInit((void**)&output, &outputLen, &outputCap);
@@ -184,7 +187,31 @@ char* ovsVersion(void) {
 	}
 
 	flexBufferFree((void**)&output, &outputLen, &outputCap);
+
+	*validVersion = (sscanf(version, "%u.%u.", major, minor) == 2);
+
 	return version;
+}
+
+// Determines the compatability arguments required for the current version
+static const char* ovsCompatArgs(void) {
+	const char* compatArgs = "";
+
+	bool validVer;
+	unsigned int majorVer, minorVer;
+	char* ver = ovsVersion(&validVer, &majorVer, &minorVer);
+	if (ver != NULL) {
+		if (validVer && (majorVer > 2 || (majorVer == 2 && minorVer > 4))) {
+			lprintf(LogDebug, "Using an OVS version ('%s') with the \"logging bug\". Using workaround.\n", ver);
+			// If this is not provided to most commands, the 2.5.0 branch
+			// crashes with an assertion failure.
+			// TODO: This is probably an OVS bug. Report it!
+			compatArgs = "--log-file=/dev/null";
+		}
+		free(ver);
+	}
+
+	return compatArgs;
 }
 
 static int ovsModuleLoad(void) {
@@ -255,6 +282,8 @@ ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSche
 
 	ovsContext* ctx = NULL;
 
+	const char* compatArgs = ovsCompatArgs();
+
 	netSwitchNamespace(net);
 
 	// Construct file paths / arguments
@@ -290,7 +319,7 @@ ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSche
 		*err = ovsCommand(directory, "ovsdb-server", dbFile, "-vconsole:off", "-vsyslog:err", "-vfile:info", "--no-chdir", "--detach", "--monitor", ovsdbLogArg, ovsdbPidArg, ovsdbSocketArg, ovsdbControlArg, NULL);
 		if (*err != 0) goto abort;
 
-		*err = ovsCommand(directory, "ovs-vsctl", OVS_COMMON_ARGS, ovsdbSocketConnArg, "--no-wait", "init", NULL);
+		*err = ovsCommand(directory, "ovs-vsctl", compatArgs, ovsdbSocketConnArg, "--no-wait", "init", NULL);
 		if (*err != 0) goto abort;
 
 		// Next, set up the vswitchd daemon. This daemon manages the virtual
@@ -304,6 +333,7 @@ ovsContext* ovsStart(netContext* net, const char* directory, const char* ovsSche
 	ctx->net = net;
 	ctx->directory = directory;
 	ctx->dbSocketConnArg = ovsdbSocketConnArg;
+	ctx->compatArgs = compatArgs;
 	flexBufferInit((void**)&ctx->actionBuffer, NULL, &ctx->actionBufferCap);
 	lprintf(LogDebug, "Created Open vSwitch context %p\n", ctx);
 	goto cleanup;
@@ -334,17 +364,19 @@ int ovsDestroy(const char* directory) {
 	newSprintf(&ovsdbControl, "%s/" OVSDB_CTL_FILE, directory);
 	newSprintf(&ovsControl, "%s/" OVS_CTL_FILE, directory);
 
+	const char* compatArgs = ovsCompatArgs();
+
 	int err = 0;
 	if (access(ovsControl, F_OK) != -1) {
 		lprintf(LogDebug, "Shutting down Open vSwitch instance with control socket '%s'\n", ovsControl);
-		err = ovsCommand(directory, "ovs-appctl", OVS_COMMON_ARGS, "-t", ovsControl, "exit", NULL);
+		err = ovsCommand(directory, "ovs-appctl", compatArgs, "-t", ovsControl, "exit", NULL);
 		if (err != 0) {
 			lprintf(LogError, "Failed to destroy Open vSwitch instance with control socket '%s'. Shut down the Open vSwitch system manually with ovs-appctl before continuing.\n", ovsControl);
 		}
 	}
 	if (access(ovsdbControl, F_OK) != -1) {
 		lprintf(LogDebug, "Shutting down OVSDB instance with control socket '%s'\n", ovsdbControl);
-		err = ovsCommand(directory, "ovs-appctl", OVS_COMMON_ARGS, "-t", ovsdbControl, "exit", NULL);
+		err = ovsCommand(directory, "ovs-appctl", compatArgs, "-t", ovsdbControl, "exit", NULL);
 		if (err != 0) {
 			lprintf(LogError, "Failed to destroy OVSDB instance with control socket '%s'. Shut down the Open vSwitch system manually with ovs-appctl before continuing.\n", ovsControl);
 		}
@@ -360,7 +392,7 @@ int ovsAddBridge(ovsContext* ctx, const char* name) {
 	if (err != 0) return err;
 
 	lprintf(LogDebug, "Creating Open vSwitch bridge '%s' in context %p\n", name, ctx);
-	err = ovsCommand(ctx->directory, "ovs-vsctl", OVS_COMMON_ARGS, ctx->dbSocketConnArg, "add-br", name, NULL);
+	err = ovsCommand(ctx->directory, "ovs-vsctl", ctx->compatArgs, ctx->dbSocketConnArg, "add-br", name, NULL);
 	return err;
 }
 
@@ -372,7 +404,7 @@ int ovsDelBridge(ovsContext* ctx, const char* name) {
 	newSprintf(&brMgmt, "%s/%s.mgmt", ctx->directory, name);
 	if (access(brMgmt, F_OK) != -1) {
 		lprintf(LogDebug, "Deleting Open vSwitch bridge '%s' in context %p\n", name, ctx);
-		err = ovsCommand(ctx->directory, "ovs-vsctl", OVS_COMMON_ARGS, ctx->dbSocketConnArg, "del-br", name, NULL);
+		err = ovsCommand(ctx->directory, "ovs-vsctl", ctx->compatArgs, ctx->dbSocketConnArg, "del-br", name, NULL);
 	}
 	free(brMgmt);
 	return err;
@@ -383,7 +415,7 @@ int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName) {
 	if (err != 0) return err;
 
 	lprintf(LogDebug, "Adding interface '%s' to Open vSwitch bridge '%s' in context %p\n", intfName, bridge, ctx);
-	err = ovsCommand(ctx->directory, "ovs-vsctl", OVS_COMMON_ARGS, ctx->dbSocketConnArg, "add-port", bridge, intfName, NULL);
+	err = ovsCommand(ctx->directory, "ovs-vsctl", ctx->compatArgs, ctx->dbSocketConnArg, "add-port", bridge, intfName, NULL);
 	if (err != 0) return err;
 
 	return 0;
@@ -395,7 +427,7 @@ int ovsClearFlows(ovsContext* ctx, const char* bridge) {
 
 	lprintf(LogDebug, "Removing all OpenFlow rules from bridge '%s' in context %p except for ARP switching\n", bridge, ctx);
 
-	err = ovsCommand(ctx->directory, "ovs-ofctl", OVS_COMMON_ARGS, "del-flows", bridge, NULL);
+	err = ovsCommand(ctx->directory, "ovs-ofctl", ctx->compatArgs, "del-flows", bridge, NULL);
 	if (err != 0) return err;
 
 	return 0;
@@ -457,7 +489,7 @@ int ovsAddArpResponse(ovsContext* ctx, const char* bridge, ip4Addr ip, const mac
 
 	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, "in_port");
 
-	return ovsCommand(ctx->directory, "ovs-ofctl", OVS_COMMON_ARGS, "add-flow", bridge, ctx->actionBuffer, NULL);
+	return ovsCommand(ctx->directory, "ovs-ofctl", ctx->compatArgs, "add-flow", bridge, ctx->actionBuffer, NULL);
 }
 
 int ovsAddIpFlow(ovsContext* ctx, const char* bridge, uint32_t inPort, const ip4Subnet* srcNet, const ip4Subnet* dstNet, const macAddr* newSrcMac, const macAddr* newDstMac, uint32_t outPort, uint32_t priority) {
@@ -511,5 +543,5 @@ int ovsAddIpFlow(ovsContext* ctx, const char* bridge, uint32_t inPort, const ip4
 	lprintDirectFinish(LogDebug);
 	flexBufferPrintf((void**)&ctx->actionBuffer, &actionLen, &ctx->actionBufferCap, ", output:%u", outPort);
 
-	return ovsCommand(ctx->directory, "ovs-ofctl", OVS_COMMON_ARGS, "add-flow", bridge, ctx->actionBuffer, NULL);
+	return ovsCommand(ctx->directory, "ovs-ofctl", ctx->compatArgs, "add-flow", bridge, ctx->actionBuffer, NULL);
 }
