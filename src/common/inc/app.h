@@ -47,5 +47,5 @@ int appParseArgs(appArgParser parser, appSetupParser setupParser, struct argp* a
 
 // Compares an argument to a list of possibilities and returns the matching
 // index. Returns a negative value if unmatched.
-long matchArg(const char* arg, const char* options[], struct argp_state* state);
+long matchArg(const char* arg, const char* options[]);
 

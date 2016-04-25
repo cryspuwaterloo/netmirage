@@ -43,6 +43,8 @@ typedef struct {
 	const char* edgeFile;
 	bool quiet; // If true, edge information is not written
 
+	bool rootIsInitNs; // If true, the "root" namespace is the init namespace
+
 	edgeNodeParams* edgeNodes;
 	size_t edgeNodeCount;
 	struct {

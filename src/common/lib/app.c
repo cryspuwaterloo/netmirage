@@ -105,7 +105,7 @@ static error_t redirectDupArg(int key, char* arg, struct argp_state* state) {
 			}
 			return 0;
 		} else if (key == appVerbosityKey) {
-			long index = matchArg(argCopy, LogLevelStrings, state);
+			long index = matchArg(argCopy, LogLevelStrings);
 			if (index < 0) {
 				fprintf(stderr, "Unknown logging level '%s'\n", argCopy);
 				return EINVAL;
@@ -229,7 +229,7 @@ int appParseArgs(appArgParser parser, appSetupParser setupParser, struct argp* a
 	return 0;
 }
 
-long matchArg(const char* arg, const char* options[], struct argp_state* state) {
+long matchArg(const char* arg, const char* options[]) {
 	if (arg[0]) {
 		// First try converting arg to an index
 		char* endptr;

@@ -37,6 +37,10 @@ int ovsDestroy(const char* directory);
 // an error code otherwise.
 int ovsAddBridge(ovsContext* ctx, const char* name);
 
+// Deletes a bridge from the given Open vSwitch instance. Returns 0 on success
+// or an error code otherwise.
+int ovsDelBridge(ovsContext* ctx, const char* name);
+
 // Adds a port to the bridge in the given Open vSwitch instance. If portId is
 // not NULL, it is set to the new port index. Returns 0 on success or an error
 // code otherwise.

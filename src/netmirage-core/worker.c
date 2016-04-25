@@ -111,9 +111,43 @@ int workerInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchem
 	return 0;
 }
 
+// Initializes the root namespace. Must already be configured.
+static int workerInitRoot(bool useInitNs, bool existing) {
+	if (existing) {
+		lprintln(LogDebug, "Opening a context for the 'root' namespace");
+	} else {
+		if (useInitNs) {
+			lprintln(LogDebug, "Configuring the init namespace as the 'root' namespace");
+		} else {
+			lprintln(LogDebug, "Creating a custom 'root' namespace");
+		}
+	}
+
+	const char* rootNsName = useInitNs ? NULL : RootName;
+	bool createNs = (!existing && !useInitNs);
+
+	int err = 0;
+	rootNet = netOpenNamespace(rootNsName, createNs, createNs, &err);
+	if (rootNet == NULL) return err;
+
+	const char* schemaPath = ovsSchema;
+	if (schemaPath[0] == '\0') schemaPath = NULL;
+	rootSwitch = ovsStart(rootNet, ovsDir, schemaPath, existing, &err);
+	if (rootSwitch == NULL) return err;
+
+	return 0;
+}
+
+static void workerCleanupRoot(void) {
+	if (rootSwitch != NULL) ovsFree(rootSwitch);
+	if (rootNet != NULL) netCloseNamespace(rootNet, false);
+	rootSwitch = NULL;
+	rootNet = NULL;
+}
+
 int workerCleanup(void) {
+	workerCleanupRoot();
 	netCloseNamespace(defaultNet, false);
-	if (rootNet) netCloseNamespace(rootNet, false);
 	netCleanup();
 	ncFreeCache(nc);
 	return 0;
@@ -220,32 +254,22 @@ static int buildVethPair(netContext* sourceNet, netContext* targetNet,
 // has already created the namespace, then the command is ignored. This is
 // useful because we can instruct a single worker to create the namespace, and
 // tell all others to use the same one.
-int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool existing) {
+int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs, bool existing) {
 	if (existing && rootNet != NULL) {
 		lprintln(LogDebug, "Root creation command ignored because we created the namespace earlier");
 		return 0;
 	}
 
-	lprintf(LogDebug, "Creating a private 'root' namespace\n");
-
 	int err = 0;
-	rootNet = netOpenNamespace(RootName, !existing, !existing, &err);
-	if (rootNet == NULL) return err;
-
-	if (!existing) {
-		err = applyNamespaceParams();
-		if (err != 0) return err;
-	}
+	err = workerInitRoot(useInitNs, existing);
 
 	rootIpSelf = addrSelf;
 	rootIpOther = addrOther;
 
-	const char* schemaPath = ovsSchema;
-	if (schemaPath[0] == '\0') schemaPath = NULL;
-	rootSwitch = ovsStart(rootNet, ovsDir, schemaPath, existing, &err);
-	if (rootSwitch == NULL) return err;
-
 	if (!existing) {
+		err = applyNamespaceParams();
+		if (err != 0) return err;
+
 		err = ovsAddBridge(rootSwitch, RootBridgeName);
 		if (err != 0) return err;
 
@@ -604,6 +628,25 @@ static int workerDestroyNamespace(const char* name, void* userData) {
 }
 
 int workerDestroyHosts(void) {
+	int err = 0;
+
+	// Create a temporary OVS context if needed, then delete the bridge. If we
+	// don't explicitly do this, then the interface will remain after the Open
+	// vSwitch instance is shut down.
+	bool useTemporaryOvs = (rootNet == NULL || rootSwitch == NULL);
+	if (useTemporaryOvs) {
+		// The namespace doesn't matter for deleting the bridge, so we specify
+		// the init namespace to avoid creating a new one, just to destroy it
+		// later.
+		err = workerInitRoot(true, true);
+	}
+	if (err == 0) {
+		ovsDelBridge(rootSwitch, RootBridgeName);
+	}
+	if (useTemporaryOvs) {
+		workerCleanupRoot();
+	}
+
 	ovsDestroy(ovsDir);
 
 	// We need to manually move external interfaces out of the root namespace.
@@ -616,7 +659,7 @@ int workerDestroyHosts(void) {
 	netContext* ctx = netOpenNamespace(RootName, false, false, NULL);
 	if (ctx != NULL) {
 		workerMoveIntfDirective* intfToMove = NULL;
-		int err = netEnumInterfaces(&workerRestoreInterface, ctx, &intfToMove);
+		err = netEnumInterfaces(&workerRestoreInterface, ctx, &intfToMove);
 		if (err != 0) {
 			lprintf(LogWarning, "An error occurred while listing the interfaces for the previously created root network namespace. You may need to reconfigure physical network interfaces to restore edge node connectivity. Error code: %d\n", err);
 		} else {

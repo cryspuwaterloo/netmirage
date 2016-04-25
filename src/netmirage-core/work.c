@@ -89,6 +89,7 @@ typedef struct {
 		struct {
 			ip4Addr addrSelf;
 			ip4Addr addrOther;
+			bool useInitNs;
 			bool existing;
 		} addRoot;
 		struct {
@@ -529,7 +530,7 @@ static int childProcess(guint id) {
 				break;
 			}
 			case WorkerAddRoot:
-				err = workerAddRoot(order.addRoot.addrSelf, order.addRoot.addrOther, order.addRoot.existing);
+				err = workerAddRoot(order.addRoot.addrSelf, order.addRoot.addrOther, order.addRoot.useInitNs, order.addRoot.existing);
 				break;
 			case WorkerAddEdgeInterface: {
 				err = workerAddEdgeInterface(order.addEdgeInterface.intfName);
@@ -821,10 +822,11 @@ int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac) {
 	return err;
 }
 
-int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther) {
+int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs) {
 	WorkerOrder* loadOrder = newOrder(WorkerAddRoot);
 	loadOrder->addRoot.addrSelf = addrSelf;
 	loadOrder->addRoot.addrOther = addrOther;
+	loadOrder->addRoot.useInitNs = useInitNs;
 	loadOrder->addRoot.existing = true;
 
 	WorkerOrder* createOrder = emalloc(sizeof(WorkerOrder));

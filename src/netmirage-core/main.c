@@ -179,12 +179,24 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 
 	case 'p': args.params.nsPrefix = arg; break;
 
+	case 'r': {
+		const char* options[] = {"custom", "init", NULL};
+		bool settings[] = {false, true};
+		long index = matchArg(arg, options);
+		if (index < 0) {
+			fprintf(stderr, "Unknown root namespace location '%s'\n", arg);
+			return EINVAL;
+		}
+		args.params.rootIsInitNs = settings[index];
+		break;
+	}
+
 	case 'm': args.params.softMemCap = (size_t)(1024.0 * 1024.0 * strtod(arg, NULL)); break;
 
 	case 'u': {
 		const char* options[] = {"shadow", "modelnet", "KiB", "Kb", NULL};
 		float divisors[] = {ShadowDivisor, ModelNetDivisor, ShadowDivisor, ModelNetDivisor};
-		long index = matchArg(arg, options, state);
+		long index = matchArg(arg, options);
 		if (index < 0) {
 			fprintf(stderr, "Unknown bandwidth units '%s'\n", arg);
 			return EINVAL;
@@ -265,10 +277,10 @@ int main(int argc, char** argv) {
 			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
 			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 3 },
 
-			{ "netns-prefix", 'p',         "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 4 },
-
-			{ "ovs-dir",      AcOvsDir,    "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 4 },
-			{ "ovs-schema",   AcOvsSchema, "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 4 },
+			{ "netns-prefix", 'p',         "PREFIX",         0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 4 },
+			{ "root-ns",      'r',         "{custom,init}",  0, "Specifies the location of the \"root\" namespace, which is used for routing traffic between external interfaces and the internal network. \"custom\" places the links in a custom namespace. \"init\" places the links in the same namespace as the init process. This may be necessary if your edges are connected to advanced interfaces that cannot be moved. However, using the init namespace as the root may cause some global networking settings to be modified. Default: \"custom\".", 4 },
+			{ "ovs-dir",      AcOvsDir,    "DIR",            0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 4 },
+			{ "ovs-schema",   AcOvsSchema, "FILE",           0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 4 },
 
 			{ "mem",          'm', "MiB",    0, "Approximate maximum memory use, specified in MiB. The program may use more than this amount if needed.", 5 },
 
@@ -301,6 +313,7 @@ int main(int argc, char** argv) {
 	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
 	args.params.destroyFirst = false;
 	args.params.quiet = false;
+	args.params.rootIsInitNs = false;
 	ip4GetSubnet(DEFAULT_CLIENTS_SUBNET, &args.params.edgeNodeDefaults.globalVSubnet);
 	args.gmlParams.bandwidthDivisor = ShadowDivisor;
 	args.gmlParams.weightKey = "latency";

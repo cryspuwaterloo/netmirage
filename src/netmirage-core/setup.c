@@ -455,7 +455,7 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		}
 	}
 
-	DO_OR_GOTO(workAddRoot(rootAddrs[0], rootAddrs[1]), cleanup, err);
+	DO_OR_GOTO(workAddRoot(rootAddrs[0], rootAddrs[1], globalParams->rootIsInitNs), cleanup, err);
 	DO_OR_GOTO(workJoin(false), cleanup, err);
 
 	// Move all interfaces associated with edge nodes into the root namespace

@@ -30,7 +30,7 @@ int workerCleanup(void);
 // Actual order implementations. See work.h for documentation.
 int workerGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMac);
 int workerGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac);
-int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool existing);
+int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs, bool existing);
 int workerAddEdgeInterface(const char* intfName);
 int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node);
 int workerSetSelfLink(nodeId id, const TopoLink* link);

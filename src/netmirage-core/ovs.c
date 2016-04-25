@@ -364,6 +364,20 @@ int ovsAddBridge(ovsContext* ctx, const char* name) {
 	return err;
 }
 
+int ovsDelBridge(ovsContext* ctx, const char* name) {
+	int err = switchContext(ctx);
+	if (err != 0) return err;
+
+	char* brMgmt;
+	newSprintf(&brMgmt, "%s/%s.mgmt", ctx->directory, name);
+	if (access(brMgmt, F_OK) != -1) {
+		lprintf(LogDebug, "Deleting Open vSwitch bridge '%s' in context %p\n", name, ctx);
+		err = ovsCommand(ctx->directory, "ovs-vsctl", OVS_COMMON_ARGS, ctx->dbSocketConnArg, "del-br", name, NULL);
+	}
+	free(brMgmt);
+	return err;
+}
+
 int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName) {
 	int err = switchContext(ctx);
 	if (err != 0) return err;
