@@ -362,7 +362,7 @@ static bool gmlNextEdge(gmlContext* ctx) {
 			edgeNodeParams* otherEdge = &globalParams->edgeNodes[i];
 			char otherEdgeSubnet[IP4_CIDR_BUFLEN];
 			ip4SubnetToString(&otherEdge->vsubnet, otherEdgeSubnet);
-			fprintf(edgeFile, " -n %s", otherEdgeSubnet);
+			fprintf(edgeFile, " -e %s", otherEdgeSubnet);
 		}
 		fprintf(edgeFile, " -c %u", currentEdgeCapacity);
 		if (edge->remoteDev == NULL) {

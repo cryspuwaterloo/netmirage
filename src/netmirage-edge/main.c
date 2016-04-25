@@ -14,6 +14,13 @@
 #include "net.h"
 #include "version.h"
 
+enum {
+	AcRuleIn = 256,
+	AcRuleOut,
+	AcRuleOther,
+	AcTableId,
+} ArgCodes;
+
 static struct {
 	char* intfName;
 	ip4Addr coreIp;
@@ -57,7 +64,7 @@ static size_t currentClient;
 
 static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned int argNum) {
 	switch (key) {
-	case 'n': {
+	case 'e': {
 		ip4Subnet edgeNet;
 		if (!ip4GetSubnet(arg, &edgeNet)) return 1;
 		flexBufferGrow(&args.netBuf, args.edgeNetCount, &args.netBufCap, 1, sizeof(ip4Subnet));
@@ -73,7 +80,7 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 		args.remove = true;
 		break;
 
-	case 'p':
+	case 'I':
 		if (ipFileOpened) {
 			fclose(ipFile);
 			ipFileOpened = false;
@@ -91,16 +98,16 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 		}
 		break;
 
-	case 'i':
+	case AcRuleIn:
 		sscanf(arg, "%" SCNu32, &args.priorityIncoming);
 		break;
-	case 'o':
+	case AcRuleOut:
 		sscanf(arg, "%" SCNu32, &args.priorityOutgoing);
 		break;
-	case 'h':
+	case AcRuleOther:
 		sscanf(arg, "%" SCNu32, &args.priorityOther);
 		break;
-	case 't':
+	case AcTableId:
 		sscanf(arg, "%" SCNu8, &args.outgoingTableId);
 		break;
 
@@ -345,20 +352,20 @@ int main(int argc, char** argv) {
 
 	// Command-line switch definitions
 	struct argp_option generalOptions[] = {
-			{ "other-edge", 'n', "CIDR", 0, "Specifies a subnet that belongs to the NetMirage virtual address space. Any traffic to this subnet will be routed through the core node.", 0 },
+			{ "other-edge", 'e', "CIDR", 0, "Specifies a subnet that belongs to the NetMirage virtual address space. Any traffic to this subnet will be routed through the core node.", 0 },
 			{ "clients",    'c', "COUNT", 0, "Specifies the number of client nodes in the core topology associated with this edge node. If this is NOT given, then IP addresses will be allocated sequentially from the subnet. If it IS given, then addresses will be sampled from each client node subnet in a round-robin pattern.", 0 },
 
 			{ "remove",     'r', NULL, OPTION_ARG_OPTIONAL, "If specified, the program will attempt to remove a previously created configuration. No new routes will be configured. Note that the program must be called with the exact same network configuration that was used to create the previous setup.", 1 },
 
-			{ "ip-file",    'p', "FILE", 0, "If specified, IP addresses allocated for applications are written to this file (one per line). A value of \"-\" indicates that the addresses should be written to stdout.", 2 },
+			{ "ip-file",    'I', "FILE", 0, "If specified, IP addresses allocated for applications are written to this file (one per line). A value of \"-\" indicates that the addresses should be written to stdout.", 2 },
 
 			{ "verbosity",  'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
 			{ "log-file",   'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors may still be written to stderr.", 3 },
 
-			{ "rule-in",    'i', "PRIORITY", 0, "Optional routing rule priority for incoming packets.", 4 },
-			{ "rule-out",   'o', "PRIORITY", 0, "Optional routing rule priority for outgoing packets.", 4 },
-			{ "rule-other", 'h', "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 4 },
-			{ "table-id",   't', "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 4 },
+			{ "rule-in",    AcRuleIn,    "PRIORITY", 0, "Optional routing rule priority for incoming packets.", 4 },
+			{ "rule-out",   AcRuleOut,   "PRIORITY", 0, "Optional routing rule priority for outgoing packets.", 4 },
+			{ "rule-other", AcRuleOther, "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 4 },
+			{ "table-id",   AcTableId,   "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 4 },
 
 			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"clients\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 5 },
 

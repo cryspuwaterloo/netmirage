@@ -35,6 +35,12 @@ static struct {
 	setupGraphMLParams gmlParams;
 } args;
 
+enum {
+	AcOvsDir = 256,
+	AcOvsSchema,
+	AcClientNode,
+} ArgCodes;
+
 // Divisors for GraphML bandwidths
 static const float ShadowDivisor = 125.f;    // KiB/s
 static const float ModelNetDivisor = 1000.f; // Kb/s
@@ -84,8 +90,8 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 	switch (key) {
 	case 'd': args.params.destroyFirst = true; break;
 	case 'f': args.params.srcFile = arg; break;
-	case 'r': args.params.ovsDir = arg; break;
-	case 'a': args.params.ovsSchema = arg; break;
+	case AcOvsDir: args.params.ovsDir = arg; break;
+	case AcOvsSchema: args.params.ovsSchema = arg; break;
 
 	case 'i': {
 		args.params.edgeNodeDefaults.intfSpecified = true;
@@ -162,13 +168,13 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 		break;
 	}
 
-	case 'g':
+	case 'I':
 		if (!ip4GetAddr(arg, &args.params.routingIp)) {
 			fprintf(stderr, "Invalid routing IP address specified: '%s'\n", arg);
 			return EINVAL;
 		}
 		break;
-	case 'o': args.params.edgeFile = arg; break;
+	case 'E': args.params.edgeFile = arg; break;
 	case 'q': args.params.quiet = true; break;
 
 	case 'p': args.params.nsPrefix = arg; break;
@@ -187,8 +193,8 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 		break;
 	}
 	case 'w': args.gmlParams.weightKey = arg; break;
-	case 'c': args.gmlParams.clientType = arg; break;
-	case 't': args.gmlParams.twoPass = true; break;
+	case AcClientNode: args.gmlParams.clientType = arg; break;
+	case '2': args.gmlParams.twoPass = true; break;
 
 	default: return ARGP_ERR_UNKNOWN;
 	}
@@ -252,17 +258,17 @@ int main(int argc, char** argv) {
 			{ "vsubnet",      'n', "CIDR",                                                                     0, "The global subnet to which all virtual clients belong. By default, each edge node is given a fragment of this global subnet in which to spawn clients. Subnets for edge nodes can also be manually assigned rather than drawing them from this larger space. The default value is " DEFAULT_CLIENTS_SUBNET ".", 1 },
 			{ "edge-node",    'e', "IP[,iface=DEVNAME][,mac=MAC][,vsubnet=CIDR][,rdev=DEVNAME][,rapps=COUNT]", 0, "Adds an edge node to the configuration. The presence of an --edge-node argument causes all edge node configuration in the setup file to be ignored. The node's IPv4 address must be specified. If the optional \"iface\" portion is specified, it lists the interface connected to the edge node (if omitted, --iface is used). \"mac\" specifies the MAC address of the node (if omitted, it is found using ARP). \"vsubnet\" specifies the subnet, in CIDR notation, for clients in the edge node (if omitted, a subnet is assigned automatically from the --vsubnet range). \"rdev\" refers to the interface on the remote machine that is connected to this machine; this is only used when producing edge node commands using --edge-output. Similarly, \"rapps\" specifies the number of remote applications to configure in the edge node commands.", 1 },
 
-			{ "routing-ip",   'g', "IP",   0,                   "The IP address that edge nodes should use to communicate with the core. This value is only used for generating edge node commands with --edge-output.", 2 },
-			{ "edge-output",  'o', "FILE", 0,                   "If specified, commands for instantiating the edge nodes are written to the given file instead of stdout. These commands should be executed on the edge nodes to connect them with the core.", 2 },
+			{ "routing-ip",   'I', "IP",   0,                   "The IP address that edge nodes should use to communicate with the core. This value is only used for generating edge node commands with --edge-output.", 2 },
+			{ "edge-output",  'E', "FILE", 0,                   "If specified, commands for instantiating the edge nodes are written to the given file instead of stdout. These commands should be executed on the edge nodes to connect them with the core.", 2 },
 			{ "quiet",        'q', NULL,   OPTION_ARG_OPTIONAL, "If specified, no edge information is written to stdout.", 2 },
 
 			{ "verbosity",    'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
 			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 3 },
 
-			{ "netns-prefix", 'p', "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 4 },
+			{ "netns-prefix", 'p',         "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 4 },
 
-			{ "ovs-dir",      'r', "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 4 },
-			{ "ovs-schema",   'a', "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 4 },
+			{ "ovs-dir",      AcOvsDir,    "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 4 },
+			{ "ovs-schema",   AcOvsSchema, "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 4 },
 
 			{ "mem",          'm', "MiB",    0, "Approximate maximum memory use, specified in MiB. The program may use more than this amount if needed.", 5 },
 
@@ -271,10 +277,10 @@ int main(int argc, char** argv) {
 			{ NULL },
 	};
 	struct argp_option gmlOptions[] = {
-			{ "units",        'u', "{shadow,modelnet,KiB,Kb}", 0,                   "Specifies the bandwidth units used in the input file. Shadow uses KiB/s (the default), whereas ModelNet uses Kbit/s." },
-			{ "weight",       'w', "KEY",                      0,                   "Edge parameter to use for computing shortest paths for static routes. Must be a key used in the GraphML file (default: \"latency\")." },
-			{ "client-node",  'c', "TYPE",                     0,                   "Type of client nodes. Nodes in the GraphML file whose \"type\" attribute matches this value will be clients. If omitted, all nodes are clients." },
-			{ "two-pass",     't', NULL,                       OPTION_ARG_OPTIONAL, "This option must be specified if the GraphML file does not place all <node> tags before all <edge> tags. This option doubles the data retrieved from disk." },
+			{ "units",        'u',          "{shadow,modelnet,KiB,Kb}", 0,                   "Specifies the bandwidth units used in the input file. Shadow uses KiB/s (the default), whereas ModelNet uses Kbit/s." },
+			{ "weight",       'w',          "KEY",                      0,                   "Edge parameter to use for computing shortest paths for static routes. Must be a key used in the GraphML file (default: \"latency\")." },
+			{ "client-node",  AcClientNode, "TYPE",                     0,                   "Type of client nodes. Nodes in the GraphML file whose \"type\" attribute matches this value will be clients. If omitted, all nodes are clients." },
+			{ "two-pass",     '2',          NULL,                       OPTION_ARG_OPTIONAL, "This option must be specified if the GraphML file does not place all <node> tags before all <edge> tags. This option doubles the data retrieved from disk." },
 			{ NULL },
 	};
 	struct argp_option defaultDoc[] = { { "\n These options provide program documentation:", 0, NULL, OPTION_DOC | OPTION_NO_USAGE }, { NULL } };
