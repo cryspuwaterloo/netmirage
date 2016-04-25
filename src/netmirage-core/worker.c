@@ -27,18 +27,18 @@
 static char ovsDir[PATH_MAX+1] = {0};
 static char ovsSchema[PATH_MAX+1] = {0};
 
-static netCache* nc;
+static netCache* nc = NULL;
 
 // We keep these outside of the cache because they are used frequently:
-static netContext* defaultNet;
-static netContext* rootNet;
+static netContext* defaultNet = NULL;
+static netContext* rootNet = NULL;
 
 // We need to have two IP addresses for the root due to policy routing problems
 // in kernel 3 (see workerAddClientRoutes for details)
 static ip4Addr rootIpSelf;
 static ip4Addr rootIpOther;
 
-static ovsContext* rootSwitch;
+static ovsContext* rootSwitch = NULL;
 
 // Converts a node identifier into a namespace name. buffer should be large
 // enough to hold the identifier in decimal representation and the NUL
@@ -122,12 +122,18 @@ static int workerInitRoot(bool useInitNs, bool existing) {
 		}
 	}
 
-	const char* rootNsName = useInitNs ? NULL : RootName;
-	bool createNs = (!existing && !useInitNs);
-
 	int err = 0;
-	rootNet = netOpenNamespace(rootNsName, createNs, createNs, &err);
-	if (rootNet == NULL) return err;
+
+	if (useInitNs) {
+		if (defaultNet == NULL) {
+			lprintln(LogError, "BUG: Using root in init namespace before initializing init context");
+			return 1;
+		}
+		rootNet = defaultNet;
+	} else {
+		rootNet = netOpenNamespace(RootName, !existing, !existing, &err);
+		if (rootNet == NULL) return err;
+	}
 
 	const char* schemaPath = ovsSchema;
 	if (schemaPath[0] == '\0') schemaPath = NULL;
@@ -139,7 +145,7 @@ static int workerInitRoot(bool useInitNs, bool existing) {
 
 static void workerCleanupRoot(void) {
 	if (rootSwitch != NULL) ovsFree(rootSwitch);
-	if (rootNet != NULL) netCloseNamespace(rootNet, false);
+	if (rootNet != NULL && rootNet != defaultNet) netCloseNamespace(rootNet, false);
 	rootSwitch = NULL;
 	rootNet = NULL;
 }

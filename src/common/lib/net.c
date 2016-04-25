@@ -451,6 +451,11 @@ static int netParseLinkInfo(const nlContext* ctx, const void* data, uint32_t len
 }
 
 int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netContext* dstCtx, int* newIdx) {
+	if (srcCtx == dstCtx) {
+		lprintf(LogDebug, "Interface %p:%d is already in destination context\n", srcCtx, devIdx);
+		return 0;
+	}
+
 	lprintf(LogDebug, "Moving interface %p:%d to context %p\n", srcCtx, devIdx, dstCtx);
 
 	// If the interface is simply moved using RTM_NEWLINK, which is what
