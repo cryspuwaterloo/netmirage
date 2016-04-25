@@ -3,4 +3,6 @@ env = env.Clone()
 
 env.Append(CPPPATH = 'inc')
 
-env.StaticLibrary('netmirage-common', Glob('lib/*.c'))
+lib = env.StaticLibrary('netmirage-common', Glob('lib/*.c'))
+
+Default(lib)

@@ -47,4 +47,5 @@ SConscript('src/netmirage-edge/SConstruct', variant_dir=buildDir+'/netmirage-edg
 tarEnv = Environment(TARFLAGS = '-c -z', TARSUFFIX = '.tar.gz')
 tarName = 'netmirage-%d.%d.%d'%(appVersion['major'],appVersion['minor'],appVersion['revision'])
 tarFiles = ['SConstruct', 'src']
-tarEnv.Tar(tarName, tarFiles)
+tar = tarEnv.Tar(tarName, tarFiles)
+tarEnv.Alias('tar', tar)

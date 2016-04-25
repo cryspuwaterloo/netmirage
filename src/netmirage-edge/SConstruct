@@ -15,3 +15,5 @@ env.Append(LIBPATH = '../common')
 Import('targetSuffix')
 app = env.Program('#bin/netmirage-edge'+targetSuffix, Glob('*.c'))
 env.Requires(app, verObj)
+
+Default(app)
