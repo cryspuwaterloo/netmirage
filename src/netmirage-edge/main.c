@@ -82,7 +82,7 @@ static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned i
 			ipFile = stdout;
 		} else {
 			errno = 0;
-			ipFile = fopen(arg, "w");
+			ipFile = fopen(arg, "we");
 			if (ipFile == NULL) {
 				lprintf(LogError, "Failed to open IP file \"%s\": %s\n", arg, strerror(errno));
 				return 1;

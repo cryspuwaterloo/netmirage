@@ -40,7 +40,7 @@ void logSetStream(FILE* output) {
 }
 
 bool logSetFile(const char* filename) {
-	FILE* fout = fopen(filename, "a");
+	FILE* fout = fopen(filename, "ae");
 	if (!fout) return false;
 	logStream = fout;
 	logSetColorize(false);

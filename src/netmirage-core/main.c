@@ -260,6 +260,7 @@ int main(int argc, char** argv) {
 			{ "log-file",     'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors will still be written to stderr.", 3 },
 
 			{ "netns-prefix", 'p', "PREFIX", 0, "Prefix string for network namespace files, which are visible to \"ip netns\" (default: \"nm-\").", 4 },
+
 			{ "ovs-dir",      'r', "DIR",    0, "Directory for storing temporary Open vSwitch files, such as the flow database and management sockets (default: \"" DEFAULT_OVS_DIR "\").", 4 },
 			{ "ovs-schema",   'a', "FILE",   0, "Path to the OVSDB schema definition for Open vSwitch (default: \"/usr/share/openvswitch/vswitch.ovsschema\").", 4 },
 

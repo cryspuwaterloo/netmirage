@@ -56,7 +56,7 @@ int nlNewContextInPlace(nlContext* ctx) {
 	lprintln(LogDebug, "Opening rtnetlink socket");
 
 	errno = 0;
-	ctx->sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+	ctx->sock = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
 	if (ctx->sock == -1) {
 		lprintf(LogError, "Failed to open netlink socket: %s\n", strerror(errno));
 		goto abort;

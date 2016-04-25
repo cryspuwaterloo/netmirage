@@ -131,7 +131,7 @@ int netInit(const char* prefix) {
 	// meaning of parameters has been lost since Linux kernel version 2.6. We
 	// use the new interpretation of the parameters, unlike tc.
 	errno = 0;
-	FILE* fd = fopen(PSCHED_PARAM_FILE, "r");
+	FILE* fd = fopen(PSCHED_PARAM_FILE, "re");
 	if (fd == NULL) {
 		lprintf(LogError, "Could not open psched parameter file ('" PSCHED_PARAM_FILE "'): %s\n", strerror(errno));
 		return errno;
@@ -248,7 +248,7 @@ int netOpenNamespaceInPlace(netContext* ctx, bool reusing, const char* name, boo
 	// We need a socket descriptor specifically for ioctl in order to bind the
 	// calls to the correct net namespace. ioctl does not accept namespace bind
 	// file descriptors like the one stored in nsFd.
-	int ioctlFd = socket(AF_PACKET, SOCK_RAW, 0);
+	int ioctlFd = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC, 0);
 	if (ioctlFd == -1) {
 		lprintf(LogError, "Failed to open ioctl socket: %s\n", strerror(errno));
 		goto freeDeleteAbort;
@@ -889,7 +889,7 @@ int netGetLocalMacAddr(netContext* ctx, const char* name, macAddr* result) {
 
 static int readSysctlFmt(const char* filePath, const char* fmt, void* value) {
 	errno = 0;
-	FILE* f = fopen(filePath, "r");
+	FILE* f = fopen(filePath, "re");
 	if (f == NULL) return errno;
 
 	int res = fscanf(f, fmt, value);
@@ -899,7 +899,7 @@ static int readSysctlFmt(const char* filePath, const char* fmt, void* value) {
 
 static int writeSysctlFmt(const char* filePath, const char* fmt, ...) {
 	errno = 0;
-	FILE* f = fopen(filePath, "w");
+	FILE* f = fopen(filePath, "we");
 	if (f == NULL) return errno;
 
 	va_list args;

@@ -127,7 +127,7 @@ int setupConfigure(const setupParams* params) {
 			lprintln(LogDebug, "Writing edge node commands to stdout");
 		} else {
 			errno = 0;
-			edgeFile = fopen(params->edgeFile, "w");
+			edgeFile = fopen(params->edgeFile, "we");
 			if (edgeFile == NULL) {
 				lprintf(LogError, "Failed to open edge node command file \"%s\": %s\n", edgeFile, strerror(errno));
 				return 1;
