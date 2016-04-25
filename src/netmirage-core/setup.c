@@ -462,23 +462,23 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 	for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
 		edgeNodeParams* edge = &globalParams->edgeNodes[i];
 
-		// Check to see if this is a duplicate. We simply perform linear
-		// searches because the number of edge nodes should be relatively small
-		// (typically less than 10).
-		bool duplicate = false;
+		// Check to see if this is a duplicate interface. We simply perform
+		// linear searches because the number of edge nodes should be relatively
+		// small (typically less than 10).
+		bool duplicateIntf = false;
 		for (size_t j = 0; j < i; ++j) {
 			edgeNodeParams* otherEdge = &globalParams->edgeNodes[j];
 			if (strcmp(edge->intf, otherEdge->intf) == 0) {
 				edgePorts[i] = edgePorts[j];
-				duplicate = true;
+				duplicateIntf = true;
 				break;
 			}
 		}
-		if (duplicate) continue;
-
-		DO_OR_GOTO(workAddEdgeInterface(edge->intf), cleanup, err);
-		DO_OR_GOTO(workJoin(false), cleanup, err);
-		edgePorts[i] = nextOvsPort++;
+		if (!duplicateIntf) {
+			DO_OR_GOTO(workAddEdgeInterface(edge->intf), cleanup, err);
+			DO_OR_GOTO(workJoin(false), cleanup, err);
+			edgePorts[i] = nextOvsPort++;
+		}
 
 		macAddr edgeLocalMac;
 		DO_OR_GOTO(workGetEdgeLocalMac(edge->intf, &edgeLocalMac), cleanup, err);

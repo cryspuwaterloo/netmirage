@@ -328,7 +328,7 @@ static int applyConfiguration(void) {
 	}
 	err = netModifyRule(net, args.remove, &args.myNet, args.intfName, netGetTableId(TableLocal), CreatorAdmin, args.priorityIncoming, true);
 	if (err != 0 && !args.remove) return err;
-	err = netModifyRule(net, args.remove, &args.myNet, NULL, args.outgoingTableId, CreatorAdmin, args.priorityOutgoing, true);
+	err = netModifyRule(net, args.remove, NULL, NULL, args.outgoingTableId, CreatorAdmin, args.priorityOutgoing, true);
 	if (err != 0 && !args.remove) return err;
 
 	return 0;
