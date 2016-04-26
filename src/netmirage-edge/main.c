@@ -14,6 +14,8 @@
 #include "net.h"
 #include "version.h"
 
+// TODO: allow multiple other-edge values in the setup file
+
 enum {
 	AcRuleIn = 256,
 	AcRuleOut,
@@ -367,7 +369,7 @@ int main(int argc, char** argv) {
 			{ "rule-other", AcRuleOther, "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 4 },
 			{ "table-id",   AcTableId,   "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 4 },
 
-			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"clients\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 5 },
+			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"applications\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 5 },
 
 			{ NULL },
 	};
