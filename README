@@ -1,0 +1,16 @@
+This is NetMirage, a tool for testing unmodified IP-based network applications
+using large virtual networks.
+
+Complete documentation for NetMirage is available at:
+https://crysp.uwaterloo.ca/software/netmirage/
+
+To compile the code, ensure that SCons is installed and run:
+	scons
+
+Compiled binaries are placed in bin/
+
+Use netmirage-core to set up a virtual network on the "core" machine. Use
+netmirage-edge to allocate virtual addresses for applications running on "edge"
+node machines. Traffic will be routed through the core. For information about
+the operation of these commands, see the documentation webpage listed above or
+use the --help arguments.
