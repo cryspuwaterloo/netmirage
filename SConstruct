@@ -31,7 +31,6 @@ env = bareEnv.Clone()
 
 # Common dependencies
 env.ParseConfig('pkg-config --cflags --libs glib-2.0')
-env.ParseConfig('pkg-config --cflags --libs libcap')
 
 # Configure build targets
 Export('bareEnv')
