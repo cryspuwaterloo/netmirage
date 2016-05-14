@@ -59,7 +59,24 @@ static appSetupParser appCurrentSetupParser;
 static const char* argSetupFile;
 
 static void argpVersion(FILE* stream, struct argp_state* state) {
-	fprintf(stream, "%s %s\n", appProductName, appProductVersion);
+	fprintf(stream, "%s %s\n"
+			"\n"
+			"Copyright (C) 2016 Nik Unger, Ian Goldberg, Qatar University, and the Qatar\n"
+			"Foundation for Education, Science and Community Development.\n"
+			"\n"
+			"NetMirage is free software: you can redistribute it and/or modify it under\n"
+			"the terms of the GNU Affero General Public License as published by the Free\n"
+			"Software Foundation, either version 3 of the License, or (at your option) any\n"
+			"later version.\n"
+			"\n"
+			"NetMirage is distributed in the hope that it will be useful, but WITHOUT ANY\n"
+			"WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR\n"
+			"A PARTICULAR PURPOSE. See the GNU Affero General Public License for more\n"
+			"details.\n"
+			"\n"
+			"You should have received a copy of the GNU Affero General Public License\n"
+			"along with NetMirage. If not, see <http://www.gnu.org/licenses/>.\n",
+			appProductName, appProductVersion);
 }
 
 void appInit(const char* productName, const char* productVersion) {
