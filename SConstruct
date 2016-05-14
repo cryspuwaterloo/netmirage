@@ -1,3 +1,23 @@
+################################################################################
+ # Copyright (C) 2016 Nik Unger, Ian Goldberg, Qatar University, and the Qatar
+ # Foundation for Education, Science and Community Development.
+ #
+ # This file is part of NetMirage.
+ #
+ # NetMirage is free software: you can redistribute it and/or modify it under
+ # the terms of the GNU Affero General Public License as published by the Free
+ # Software Foundation, either version 3 of the License, or (at your option) any
+ # later version.
+ #
+ # NetMirage is distributed in the hope that it will be useful, but WITHOUT ANY
+ # WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+ # A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+ # details.
+ #
+ # You should have received a copy of the GNU Affero General Public License
+ # along with NetMirage. If not, see <http://www.gnu.org/licenses/>.
+ ###############################################################################
+
 # Public version information
 appVersion = {
 	'major': 0,
@@ -45,6 +65,6 @@ SConscript('src/netmirage-edge/SConstruct', variant_dir=buildDir+'/netmirage-edg
 # Configure the tarball build target
 tarName = 'netmirage-%d.%d.%d'%(appVersion['major'],appVersion['minor'],appVersion['revision'])
 tarEnv = Environment(TARFLAGS = ('-c -z --transform \'s,^,%s/,\''%tarName), TARSUFFIX = '.tar.gz')
-tarFiles = ['SConstruct', 'README', 'src']
+tarFiles = ['SConstruct', 'COPYING', 'LIBRARIES', 'README', 'src']
 tar = tarEnv.Tar(tarName, tarFiles)
 tarEnv.Alias('tar', tar)

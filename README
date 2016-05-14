@@ -1,7 +1,7 @@
 This is NetMirage, a tool for testing unmodified IP-based network applications
 using large virtual networks.
 
-Complete documentation for NetMirage is available at:
+Complete documentation and contact information for NetMirage is available at:
 https://crysp.uwaterloo.ca/software/netmirage/
 
 To compile the code, ensure that SCons is installed and run:
@@ -14,3 +14,23 @@ netmirage-edge to allocate virtual addresses for applications running on "edge"
 node machines. Traffic will be routed through the core. For information about
 the operation of these commands, see the documentation webpage listed above or
 use the --help arguments.
+
+--------------------------------------------------------------------------------
+
+NetMirage is Copyright © 2016 Nik Unger, Ian Goldberg, Qatar University, and the
+Qatar Foundation for Education, Science and Community Development.
+
+The design of NetMirage is based on the design of SNEAC, the Scalable Network
+Emulator for Anonymous Communication designed and developed by Sukhbir Singh.
+
+NetMirage is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+NetMirage is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along
+with NetMirage. If not, see <http://www.gnu.org/licenses/>.
