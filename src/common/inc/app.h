@@ -23,7 +23,6 @@
 // logic, such as argument parsing.
 
 #include <stdbool.h>
-#include <stdio.h>
 
 #include <argp.h>
 #include <glib.h>

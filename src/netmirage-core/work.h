@@ -31,8 +31,8 @@
 // is already queued, one of the errors will be dropped, so the caller is
 // expected to cease all work operations after encountering an error.
 
+#include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 #include "ip.h"
 #include "log.h"

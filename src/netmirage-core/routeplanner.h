@@ -23,7 +23,6 @@
 // static routing for a network graph.
 
 #include <stdbool.h>
-#include <stdlib.h>
 
 #include "topology.h"
 

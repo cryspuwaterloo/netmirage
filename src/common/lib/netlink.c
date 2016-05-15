@@ -19,16 +19,16 @@
  *******************************************************************************/
 #include "netlink.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <errno.h>
 #include <string.h>
 
-#include <unistd.h>
 #include <asm/types.h>
-#include <sys/socket.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "log.h"
 #include "mem.h"

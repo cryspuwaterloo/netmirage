@@ -19,8 +19,8 @@
  *******************************************************************************/
 #pragma once
 
-#include <stdbool.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 // Terminates the logging system

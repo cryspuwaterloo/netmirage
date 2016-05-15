@@ -23,7 +23,8 @@
 // implemented using efficient data structures that cache the most requested
 // contexts while maintaining an upper bound on memory use.
 
-#include <stdlib.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #include "net.h"
 #include "topology.h"

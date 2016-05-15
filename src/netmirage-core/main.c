@@ -17,16 +17,16 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with NetMirage. If not, see <http://www.gnu.org/licenses/>.
  *******************************************************************************/
-#include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 #include <argp.h>
 #include <glib.h>
 #include <libxml/parser.h>
+#include <strings.h>
 
 #include "app.h"
 #include "ip.h"
@@ -36,7 +36,6 @@
 #include "version.h"
 
 // TODO: normalize naming conventions for "client", "root", etc.
-// TODO: minimize includes
 // TODO: more specific error codes than 1
 // TODO: normalize (return result, out err) vs (return err, out result)
 // TODO: normalize res and err

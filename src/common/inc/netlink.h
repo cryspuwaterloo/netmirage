@@ -19,9 +19,9 @@
  *******************************************************************************/
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
 
 // This module defines functions for sending and receiving rtnetlink messages.
 // This module is not thread-safe.

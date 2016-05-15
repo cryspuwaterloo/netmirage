@@ -24,7 +24,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
+#include <stddef.h>
 
 // IP address stored in network order (big endian)
 typedef uint32_t ip4Addr;

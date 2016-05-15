@@ -19,7 +19,7 @@
  *******************************************************************************/
 #pragma once
 
-#include <stdlib.h>
+#include <stddef.h>
 
 // These operations perform arithmetic on two operands and return the result in
 // the third. If an overflow occurs, the program aborts. All values are

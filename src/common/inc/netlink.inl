@@ -23,6 +23,7 @@
 
 // WARNING: Nothing except netlink.c should access the data members!
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <unistd.h>

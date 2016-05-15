@@ -23,6 +23,8 @@
 // thread-safe. Calling any of the functions in this module will result in the
 // active network namespace for the process being changed.
 
+#include <stdbool.h>
+
 #include "ip.h"
 #include "net.h"
 
