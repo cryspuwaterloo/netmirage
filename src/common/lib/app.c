@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with NetMirage. If not, see <http://www.gnu.org/licenses/>.
  *******************************************************************************/
-#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L // Require POSIX.1-2008
 
 #include "app.h"
 
@@ -27,6 +27,7 @@
 
 #include <argp.h>
 #include <glib.h>
+#include <strings.h>
 
 #include "log.h"
 #include "mem.h"

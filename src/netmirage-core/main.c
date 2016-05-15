@@ -36,7 +36,6 @@
 #include "version.h"
 
 // TODO: normalize naming conventions for "client", "root", etc.
-// TODO: increase precision of _GNU_SOURCE
 // TODO: minimize includes
 // TODO: more specific error codes than 1
 // TODO: normalize (return result, out err) vs (return err, out result)

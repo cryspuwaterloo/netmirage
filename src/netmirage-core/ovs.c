@@ -17,7 +17,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with NetMirage. If not, see <http://www.gnu.org/licenses/>.
  *******************************************************************************/
-#define _GNU_SOURCE
+#define _GNU_SOURCE // Needed for Linux-specific functionality
 
 #include "ovs.h"
 

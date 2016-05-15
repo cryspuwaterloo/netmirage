@@ -28,7 +28,7 @@
 #error "This program must be compiled with Linux kernel version 3.3 or later."
 #endif
 
-#define _GNU_SOURCE
+#define _GNU_SOURCE // Needed for Linux-specific functionality
 
 #include "net.h"
 
