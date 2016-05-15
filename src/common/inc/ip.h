@@ -76,7 +76,7 @@ bool ip4SubnetHasReserved(const ip4Subnet* subnet);
 // event of an error, buffer is set to an error string.
 int ip4SubnetToString(const ip4Subnet* subnet, char* buffer);
 
-typedef struct ip4Iter_s ip4Iter;
+typedef struct ip4Iter ip4Iter;
 
 // Creates an iterator that enumerates IP addresses within a subnet. All
 // addresses in the "avoidSubnets" subnets will be skipped. avoidSubnets is
@@ -94,7 +94,7 @@ ip4Addr ip4IterAddr(const ip4Iter* it);
 
 void ip4FreeIter(ip4Iter* it);
 
-typedef struct ip4FragIter_s ip4FragIter;
+typedef struct ip4FragIter ip4FragIter;
 
 // Splits a large subnet into several smaller subnets, and returns an iterator
 // for these "fragments". subnet is broken into fragmentCount pieces. If

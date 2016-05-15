@@ -26,7 +26,7 @@
 #include "ip.h"
 #include "net.h"
 
-typedef struct ovsContext_s ovsContext;
+typedef struct ovsContext ovsContext;
 
 // Returns a human-readable version string for the Open vSwitch installation. If
 // Open vSwitch is not installed or is not accessible, returns NULL. The caller

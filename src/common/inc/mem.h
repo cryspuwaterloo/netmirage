@@ -37,23 +37,23 @@
 #else
 // Compatibility with older GCC. For details, see https://www.fefe.de/intof.html
 #include <stdint.h>
-#define __eadd(a, b, res, t, m) do{ t __a = (a); t __b = (b); if (m - __b < __a) abort(); *(res)=__a+__b; }while(0)
-#define eadd32(a, b, res) __eadd((a), (b), (res), uint32_t, UINT32_MAX)
-#define eadd64(a, b, res) __eadd((a), (b), (res), uint64_t, UINT64_MAX)
-#define eaddSize(a, b, res) __eadd((a), (b), (res), size_t, SIZE_MAX)
-#define __esub(a, b, res, t) do{ t __a = (a); t __b = (b); if (__b > __a) abort(); *(res)=__a-__b; }while(0)
-#define esub32(a, b, res) __esub((a), (b), (res), uint32_t)
-#define esub64(a, b, res) __esub((a), (b), (res), uint64_t)
-#define esubSize(a, b, res) __esub((a), (b), (res), size_t)
-#define emul32(a, b, res) do{ uint64_t __res = (uint64_t)(a)*(b); if (__res > UINT32_MAX) abort(); *(res)=(uint32_t)__res; }while(0)
+#define ___eadd(a, b, res, t, m) do{ t ___a = (a); t ___b = (b); if (m - ___b < ___a) abort(); *(res)=___a+___b; }while(0)
+#define eadd32(a, b, res) ___eadd((a), (b), (res), uint32_t, UINT32_MAX)
+#define eadd64(a, b, res) ___eadd((a), (b), (res), uint64_t, UINT64_MAX)
+#define eaddSize(a, b, res) ___eadd((a), (b), (res), size_t, SIZE_MAX)
+#define ___esub(a, b, res, t) do{ t ___a = (a); t ___b = (b); if (___b > ___a) abort(); *(res)=___a-___b; }while(0)
+#define esub32(a, b, res) ___esub((a), (b), (res), uint32_t)
+#define esub64(a, b, res) ___esub((a), (b), (res), uint64_t)
+#define esubSize(a, b, res) ___esub((a), (b), (res), size_t)
+#define emul32(a, b, res) do{ uint64_t ___res = (uint64_t)(a)*(b); if (___res > UINT32_MAX) abort(); *(res)=(uint32_t)___res; }while(0)
 #define emul64(a, b, res) do{ \
-		uint64_t __ma = (a); uint64_t __mb = (b); \
-		uint64_t __a1 = __ma >> 32; uint64_t __b1 = __mb >> 32; \
-		uint64_t __a0 = __ma & UINT32_MAX; uint64_t __b0 = __mb & UINT32_MAX; \
-		if (__a1 > 0 && __b1 > 0) abort(); \
-		__ma = (uint64_t)__a1*__b0 + (uint64_t)__a0*__b1; \
-		if (__ma > UINT32_MAX) abort(); \
-		eadd64((__ma << 32), (uint64_t)__a0*__b0, res); \
+		uint64_t ___ma = (a); uint64_t ___mb = (b); \
+		uint64_t ___a1 = ___ma >> 32; uint64_t ___b1 = ___mb >> 32; \
+		uint64_t ___a0 = ___ma & UINT32_MAX; uint64_t ___b0 = ___mb & UINT32_MAX; \
+		if (___a1 > 0 && ___b1 > 0) abort(); \
+		___ma = (uint64_t)___a1*___b0 + (uint64_t)___a0*___b1; \
+		if (___ma > UINT32_MAX) abort(); \
+		eadd64((___ma << 32), (uint64_t)___a0*___b0, res); \
 	}while(0)
 #if SIZE_MAX == UINT64_MAX
 #define emulSize(a, b, res) emul64((a), (b), (res))

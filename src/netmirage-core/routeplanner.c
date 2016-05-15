@@ -121,7 +121,7 @@ typedef struct {
 	nodeId startIndex;
 } rpWorkUnit;
 
-struct routePlanner_s {
+struct routePlanner {
 	edgeInfo* edges;
 	nodeId nodeCount;
 

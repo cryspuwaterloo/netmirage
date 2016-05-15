@@ -28,7 +28,7 @@
 #include "net.h"
 #include "topology.h"
 
-typedef struct netCache_s netCache;
+typedef struct netCache netCache;
 
 // Allocates a new cache. The maxMemoryUse serves as a guideline for the size of
 // the cache, but is not a hard limit; the function is free to exceed or ignore

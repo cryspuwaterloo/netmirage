@@ -40,13 +40,14 @@
 
 static const uint64_t MIN_ENTRIES = 100;
 
-typedef struct ncNode_s {
+typedef struct ncNode ncNode;
+struct ncNode {
 	gpointer key;
 	netContext ctx;
-	struct ncNode_s* newer;
-} ncNode;
+	ncNode* newer;
+};
 
-struct netCache_s {
+struct netCache {
 	uint64_t maxEntries;
 	ncNode* oldest;
 	ncNode* newest;

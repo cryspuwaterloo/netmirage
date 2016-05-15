@@ -47,8 +47,8 @@ static logCallback logFunc;
 static FILE* logStream;
 static bool closeLog;
 static bool useColors;
-static const char* _logPrefix;
-LogLevel _logThreshold;
+static const char* ___logPrefix;
+LogLevel ___logThreshold;
 
 void logSetStream(FILE* output) {
 	logStream = output;
@@ -84,11 +84,11 @@ bool logColorized(void) {
 }
 
 void logSetPrefix(const char* prefix) {
-	_logPrefix = prefix;
+	___logPrefix = prefix;
 }
 
 const char* logPrefix(void) {
-	return _logPrefix;
+	return ___logPrefix;
 }
 
 void logCleanup(void) {
@@ -100,11 +100,11 @@ void logCleanup(void) {
 }
 
 void logSetThreshold(LogLevel level) {
-	_logThreshold = level;
+	___logThreshold = level;
 }
 
 LogLevel logThreshold(void) {
-	return _logThreshold;
+	return ___logThreshold;
 }
 
 static void logVprintf(const char* fmt, va_list args) {
@@ -183,34 +183,34 @@ static void colorVfprintf(LogLevel level, bool resetOnlyLast, const char* fmt, v
 	free(buf);
 }
 
-void _lprintln(LogLevel level, const char* str) {
-	_lprintHead(level);
+void ___lprintln(LogLevel level, const char* str) {
+	___lprintHead(level);
 	logPrint(str);
 	if (useColors) {
 		logPrint(COLOR_RESET);
 	}
 	logPrint("\n");
-	_lprintDirectFinish();
+	___lprintDirectFinish();
 }
 
-void _lprintf(LogLevel level, const char* fmt, ...) {
+void ___lprintf(LogLevel level, const char* fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
-	_lvprintf(level, fmt, args);
+	___lvprintf(level, fmt, args);
 	va_end(args);
 }
 
-void _lvprintf(LogLevel level, const char* fmt, va_list args) {
-	_lprintHead(level);
+void ___lvprintf(LogLevel level, const char* fmt, va_list args) {
+	___lprintHead(level);
 	if (useColors) {
 		colorVfprintf(level, false, fmt, args);
 	} else {
 		logVprintf(fmt, args);
 	}
-	_lprintDirectFinish();
+	___lprintDirectFinish();
 }
 
-void _lprintHead(LogLevel level) {
+void ___lprintHead(LogLevel level) {
 	g_mutex_lock(&logLock);
 
 	// Generate timestamp
@@ -224,7 +224,7 @@ void _lprintHead(LogLevel level) {
 	}
 
 	// Print prepended args
-	const char* prefix = (_logPrefix == NULL ? "" : _logPrefix);
+	const char* prefix = (___logPrefix == NULL ? "" : ___logPrefix);
 	if (useColors) {
 		logPrintf(COLOR_TIMESTAMP "[%s] %s%s%s:%s ", timeStr, LogLabelColors[level], LogLevelStrings[level], prefix, LogTextColors[level]);
 	} else {
@@ -232,14 +232,14 @@ void _lprintHead(LogLevel level) {
 	}
 }
 
-void _lprintDirectf(const char* fmt, ...) {
+void ___lprintDirectf(const char* fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
-	_lvprintDirectf(fmt, args);
+	___lvprintDirectf(fmt, args);
 	va_end(args);
 }
 
-void _lvprintDirectf(const char* fmt, va_list args) {
+void ___lvprintDirectf(const char* fmt, va_list args) {
 	if (useColors) {
 		colorVfprintf(0, true, fmt, args);
 	} else {
@@ -247,7 +247,7 @@ void _lvprintDirectf(const char* fmt, va_list args) {
 	}
 }
 
-void _lprintDirectFinish(void) {
+void ___lprintDirectFinish(void) {
 	// Note that this is not an appropriate place to emit COLOR_RESET codes for
 	// colored logs, since some direct print calls might contain embedded
 	// newlines.
@@ -257,7 +257,7 @@ void _lprintDirectFinish(void) {
 	}
 }
 
-void _lprintRaw(const char* str) {
+void ___lprintRaw(const char* str) {
 	g_mutex_lock(&logLock);
 	logPrint(str);
 	g_mutex_unlock(&logLock);

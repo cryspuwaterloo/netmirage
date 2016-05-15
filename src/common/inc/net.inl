@@ -26,7 +26,7 @@
 // Embed nlContext for performance
 #include "netlink.inl"
 
-struct netContext_s {
+struct netContext {
 	int fd;
 	int ioctlFd;
 	nlContext nl;

@@ -35,7 +35,7 @@
 
 #include "ip.h"
 
-typedef struct netContext_s netContext;
+typedef struct netContext netContext;
 
 #define INTERFACE_BUF_LEN 16
 

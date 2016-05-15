@@ -618,11 +618,12 @@ int workerAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const ma
 	return ovsAddIpFlow(rootSwitch, RootBridgeName, 0, NULL, edgeSubnet, edgeLocalMac, edgeRemoteMac, edgePort, OvsPriorityOut);
 }
 
-typedef struct workerMoveIntfDirective_s {
+typedef struct workerMoveIntfDirective workerMoveIntfDirective;
+struct workerMoveIntfDirective {
 	int idx;
 	char name[INTERFACE_BUF_LEN+1];
-	struct workerMoveIntfDirective_s* next;
-} workerMoveIntfDirective;
+	workerMoveIntfDirective* next;
+};
 
 static int workerRestoreInterface(const char* name, int idx, void* userData) {
 	// Ignore any interfaces that we may have created

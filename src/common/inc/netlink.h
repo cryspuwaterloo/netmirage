@@ -26,7 +26,7 @@
 // This module defines functions for sending and receiving rtnetlink messages.
 // This module is not thread-safe.
 
-typedef struct nlContext_s nlContext;
+typedef struct nlContext nlContext;
 
 // Initializes the netlink subsystem
 void nlInit(void);

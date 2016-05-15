@@ -33,7 +33,7 @@
 
 #define MAX_ATTR_NEST 10
 
-struct nlContext_s {
+struct nlContext {
 	int sock;
 	uint32_t nextSeq;
 

@@ -149,7 +149,7 @@ static int ignoreRangeCompare(const void* r1, const void* r2) {
 	}
 }
 
-struct ip4Iter_s {
+struct ip4Iter {
 	int64_t currentAddr; // Host order
 	int64_t finalAddr; // Host order
 	ignoreRange* ignores;
@@ -229,7 +229,7 @@ void ip4FreeIter(ip4Iter* it) {
 	free(it);
 }
 
-struct ip4FragIter_s {
+struct ip4FragIter {
 	bool first;
 	uint64_t currentAddr; // Host order
 	uint64_t smallIncrement;

@@ -53,9 +53,9 @@ static FILE* edgeFile = NULL;
 }while(0)
 
 #define DO_OR_RETURN(stmt) do{ \
-	int __err = (stmt); \
-	if (__err != 0) { \
-		return __err; \
+	int ___err = (stmt); \
+	if (___err != 0) { \
+		return ___err; \
 	} \
 }while(0)
 

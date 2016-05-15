@@ -36,7 +36,6 @@
 #include "version.h"
 
 // TODO: normalize naming conventions for "client", "root", etc.
-// TODO: follow POSIX reserved identifier conventions
 // TODO: increase precision of _GNU_SOURCE
 // TODO: minimize includes
 // TODO: more specific error codes than 1

@@ -27,7 +27,7 @@
 
 #include "topology.h"
 
-typedef struct routePlanner_s routePlanner;
+typedef struct routePlanner routePlanner;
 
 // Creates a new route planner for nodeCount nodes. Initially, all edges in the
 // graph are untraversable. Returns NULL if an error occurred.

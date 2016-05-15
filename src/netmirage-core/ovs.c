@@ -37,7 +37,7 @@
 #include "mem.h"
 #include "net.h"
 
-struct ovsContext_s {
+struct ovsContext {
 	netContext* net;
 	const char* directory;
 	char* dbSocketConnArg;
