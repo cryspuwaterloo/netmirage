@@ -399,7 +399,7 @@ static void graphEndElement(void* ctx, const xmlChar* name) {
 
 		switch (state->dataMode) {
 		case GpNode:
-			if (state->nodeAttribs.typeId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.typeId)) {
+			if (state->clientType != NULL && state->nodeAttribs.typeId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.typeId)) {
 				state->node.t.client = (xmlStrEqual(value, (const xmlChar*)"client"));
 			} else if (state->nodeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->nodeAttribs.packetLossId)) {
 				state->node.t.packetLoss = strtod((const char*)value, NULL);
