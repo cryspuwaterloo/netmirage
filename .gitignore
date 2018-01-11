@@ -1,0 +1,17 @@
+# Output
+build
+bin
+
+# SCons
+.sconsign.dblite
+
+# Eclipse
+.metadata
+tmp/
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.settings/
+.loadpath

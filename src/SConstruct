@@ -1,0 +1,20 @@
+import subprocess
+
+import SCons.Errors
+
+# Resolve libxml dependency
+try:
+	libXmlVersion = subprocess.check_output(['xml2-config', '--version']).strip()
+except:
+	raise SCons.Errors.UserError, 'Could not locate libxml install location. Ensure that libxml is installed and xml2-config is in the system path.'
+libXmlFlags = subprocess.check_output(['xml2-config', '--cflags']).strip()
+libXmlLibs = subprocess.check_output(['xml2-config', '--libs']).strip()
+print 'Using libxml %s [flags = %s] [libs = %s]'%(libXmlVersion, libXmlFlags, libXmlLibs)
+
+# Build SNEAC
+env = Environment()
+env.Append(CFLAGS = '-Wall -Werror -fmax-errors=10 -std=c11')
+env.Append(CFLAGS = libXmlFlags)
+env.Append(LINKFLAGS = libXmlLibs)
+sneac = env.Program('sneac', Glob('*.c'))
+env.Install('../bin', sneac)
