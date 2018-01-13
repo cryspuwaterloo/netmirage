@@ -1,5 +1,5 @@
 ################################################################################
- # Copyright (C) 2016 Nik Unger, Ian Goldberg, Qatar University, and the Qatar
+ # Copyright (C) 2018 Nik Unger, Ian Goldberg, Qatar University, and the Qatar
  # Foundation for Education, Science and Community Development.
  #
  # This file is part of NetMirage.

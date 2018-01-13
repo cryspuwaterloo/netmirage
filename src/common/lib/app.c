@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright © 2016 Nik Unger, Ian Goldberg, Qatar University, and the Qatar
+ * Copyright © 2018 Nik Unger, Ian Goldberg, Qatar University, and the Qatar
  * Foundation for Education, Science and Community Development.
  *
  * This file is part of NetMirage.
@@ -62,7 +62,7 @@ static const char* argSetupFile;
 static void argpVersion(FILE* stream, struct argp_state* state) {
 	fprintf(stream, "%s %s\n"
 			"\n"
-			"Copyright (C) 2016 Nik Unger, Ian Goldberg, Qatar University, and the Qatar\n"
+			"Copyright (C) 2018 Nik Unger, Ian Goldberg, Qatar University, and the Qatar\n"
 			"Foundation for Education, Science and Community Development.\n"
 			"\n"
 			"NetMirage is free software: you can redistribute it and/or modify it under\n"
