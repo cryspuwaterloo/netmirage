@@ -22,7 +22,7 @@
 appVersion = {
 	'major': 0,
 	'minor': 9,
-	'revision': 0
+	'revision': 1
 }
 
 bareEnv = Environment()
