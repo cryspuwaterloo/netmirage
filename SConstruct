@@ -25,6 +25,8 @@ appVersion = {
 	'revision': 1
 }
 
+EnsureSConsVersion(2, 4)
+
 bareEnv = Environment()
 
 # Common build flags

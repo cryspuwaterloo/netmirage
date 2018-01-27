@@ -326,7 +326,7 @@ int main(int argc, char** argv) {
 	// Default arguments
 	args.params.nsPrefix = "nm-";
 	args.params.ovsDir = DEFAULT_OVS_DIR;
-	args.params.softMemCap = 2L * 1024L * 1024L * 1024L;
+	args.params.softMemCap = 2LL * 1024LL * 1024LL * 1024LL;
 	args.params.destroyFirst = false;
 	args.params.quiet = false;
 	args.params.rootIsInitNs = false;

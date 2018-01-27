@@ -262,7 +262,8 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 			return -1;
 		}
 
-		for (struct nlmsghdr* nlm = msgBuffer.data; NLMSG_OK(nlm, res); nlm = NLMSG_NEXT(nlm, res)) {
+		unsigned int len;
+		for (struct nlmsghdr* nlm = msgBuffer.data; NLMSG_OK(nlm, (int)len); nlm = NLMSG_NEXT(nlm, len)) {
 			if (nlm->nlmsg_type == NLMSG_NOOP) continue;
 			if (nlm->nlmsg_seq != seq) {
 				// We ignore responses to previous messages, since we were not
