@@ -20,6 +20,7 @@
 #include "netlink.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -261,8 +262,12 @@ int nlSendMessage(nlContext* ctx, bool waitResponse, nlResponseHandler handler, 
 			lprintf(LogError, "Netlink response to %p used wrong address protocol\n", ctx);
 			return -1;
 		}
+		if ((size_t)res > UINT_MAX) {
+			lprintf(LogError, "Netlink response overflows buffer\n", ctx);
+			return -1;
+		}
 
-		unsigned int len;
+		unsigned int len = (unsigned int)res;
 		for (struct nlmsghdr* nlm = msgBuffer.data; NLMSG_OK(nlm, (int)len); nlm = NLMSG_NEXT(nlm, len)) {
 			if (nlm->nlmsg_type == NLMSG_NOOP) continue;
 			if (nlm->nlmsg_seq != seq) {
