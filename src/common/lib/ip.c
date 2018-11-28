@@ -60,7 +60,7 @@ int ip4AddrToString(ip4Addr addr, char* buffer) {
 bool ip4GetSubnet(const char* str, ip4Subnet* subnet) {
 	size_t len = strlen(str);
 	char strCopy[len+1];
-	strncpy(strCopy, str, len);
+	memcpy(strCopy, str, len);
 	strCopy[len] = '\0';
 
 	char* slash = strchr(strCopy, '/');
