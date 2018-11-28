@@ -345,7 +345,7 @@ int main(int argc, char** argv) {
 	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;
 
-	if (err == 0 && (!args.params.destroyFirst || args.params.srcFile != NULL)) {
+	if (!args.params.destroyFirst || args.params.srcFile != NULL) {
 		lprintln(LogInfo, "Beginning network construction");
 		err = setupGraphML(&args.gmlParams);
 	}

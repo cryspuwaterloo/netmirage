@@ -380,8 +380,11 @@ static int netSendLinkCallback(const nlContext* ctx, const void* data, uint32_t 
 	const struct ifinfomsg* ifi = data;
 	int idx = ifi->ifi_index;
 
+	size_t headerSize = NLMSG_ALIGN(sizeof(struct ifinfomsg));
+	len -= (uint32_t)headerSize;
+
 	const char* intfName = NULL;
-	const struct rtattr* rta = (const struct rtattr*)((const char*)data + NLMSG_ALIGN(sizeof(struct ifinfomsg)));
+	const struct rtattr* rta = (const struct rtattr*)((const char*)data + headerSize);
 	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
 		if (rta->rta_type == IFLA_IFNAME) {
 			intfName = RTA_DATA(rta);
@@ -436,6 +439,7 @@ static int netParseLinkInfo(const nlContext* ctx, const void* data, uint32_t len
 	memcpy(&attrs->msg, data, headerSize);
 
 	headerSize = NLMSG_ALIGN(headerSize);
+	len -= (uint32_t)headerSize;
 
 	size_t rtAttrCap = 0;
 	if (attrs->rtAttrs != NULL) flexBufferFree(&attrs->rtAttrs, &attrs->rtAttrSize, &rtAttrCap);
@@ -725,7 +729,10 @@ static int netSearchAddr(const nlContext* ctx, const void* data, uint32_t len, u
 	if ((int)ifa->ifa_index != addrCtx->findIndex) return 0;
 	if (ifa->ifa_family != AF_INET) return 0;
 
-	for (const struct rtattr* rta = (const struct rtattr*)((const char*)data + NLMSG_ALIGN(sizeof(struct ifaddrmsg))); RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+	size_t headerSize = NLMSG_ALIGN(sizeof(struct ifaddrmsg));
+	len -= (uint32_t)headerSize;
+
+	for (const struct rtattr* rta = (const struct rtattr*)((const char*)data + headerSize); RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
 		if (rta->rta_type == IFA_ADDRESS) {
 			ip4Addr addr = *(uint32_t*)RTA_DATA(rta);
 			return addrCtx->callback(addr, addrCtx->userData);
@@ -1123,10 +1130,13 @@ typedef struct {
 static int netRecordRuleExistence(const nlContext* ctx, const void* data, uint32_t len, uint16_t type, uint16_t flags, void* arg) {
 	netEnumRuleContext* enumCtx = arg;
 
+	size_t headerSize = NLMSG_ALIGN(sizeof(struct rtmsg));
+	len -= (uint32_t)headerSize;
+
 	uint32_t rulePriority = 0;
 
 	// Check for explicit FRA_PRIORITY. If it is missing, then it is zero.
-	const struct rtattr* rta = (const struct rtattr*)((const char*)data + NLMSG_ALIGN(sizeof(struct rtmsg)));
+	const struct rtattr* rta = (const struct rtattr*)((const char*)data + headerSize);
 	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
 		if (rta->rta_type == FRA_PRIORITY) {
 			rulePriority = *(uint32_t*)RTA_DATA(rta);
