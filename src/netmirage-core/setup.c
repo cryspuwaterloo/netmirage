@@ -69,10 +69,11 @@ int setupConfigure(const setupParams* params) {
 	DO_OR_RETURN(workConfigure(logThreshold(), logColorized(), params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap));
 	DO_OR_RETURN(workJoin(false));
 
-	if (params->destroyFirst) {
-		int err = destroyNetwork();
-		if (err != 0) return err;
-	} else if (params->edgeNodeCount < 1) {
+	if (params->destroyOnly) {
+		return destroyNetwork();
+	}
+
+	if (params->edgeNodeCount < 1) {
 		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
 		return 1;
 	}

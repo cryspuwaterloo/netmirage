@@ -104,7 +104,8 @@ static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macS
 
 static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned int argNum) {
 	switch (key) {
-	case 'd': args.params.destroyFirst = true; break;
+	case 'd': args.params.destroyOnly = true; break;
+	case 'k': args.params.keepOldNetworks = true; break;
 	case 'f': args.params.srcFile = arg; break;
 	case AcOvsDir: args.params.ovsDir = arg; break;
 	case AcOvsSchema: args.params.ovsSchema = arg; break;
@@ -278,7 +279,8 @@ int main(int argc, char** argv) {
 
 	// Command-line switch definitions
 	struct argp_option generalOptions[] = {
-			{ "destroy",      'd', NULL,   OPTION_ARG_OPTIONAL, "If specified, any previous virtual network created by the program will be destroyed. If -f is not specified, the program terminates after deleting the network.", 0 },
+			{ "destroy",      'd', NULL,   OPTION_ARG_OPTIONAL, "If specified, any previous virtual network created by the program will be destroyed and the program terminates without creating a new network.", 0 },
+			{ "keep",         'k', NULL,   OPTION_ARG_OPTIONAL, "If specified, previous virtual networks created by the program are not destroyed before setting up new ones. Note that --destroy takes priority.", 0 },
 			{ "file",         'f', "FILE", 0,                   "The GraphML file containing the network topology. If omitted, the topology is read from stdin.", 0 },
 			{ "setup-file",   's', "FILE", 0,                   "The file containing setup information about edge nodes and emulator interfaces. This file is a key-value file (similar to an .ini file). Every group whose name begins with \"edge\" or \"node\" denotes the configuration for an edge node. The keys and values permitted in an edge node group are the same as those in an --edge-node argument. There may also be an \"emulator\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 0 },
 
@@ -327,7 +329,8 @@ int main(int argc, char** argv) {
 	args.params.nsPrefix = "nm-";
 	args.params.ovsDir = DEFAULT_OVS_DIR;
 	args.params.softMemCap = 2LL * 1024LL * 1024LL * 1024LL;
-	args.params.destroyFirst = false;
+	args.params.destroyOnly = false;
+	args.params.keepOldNetworks = false;
 	args.params.quiet = false;
 	args.params.rootIsInitNs = false;
 	ip4GetSubnet(DEFAULT_CLIENTS_SUBNET, &args.params.edgeNodeDefaults.globalVSubnet);
@@ -342,12 +345,21 @@ int main(int argc, char** argv) {
 
 	lprintf(LogInfo, "Starting NetMirage Core %s\n", getVersion());
 
+	lprintln(LogInfo, "Loading edge node configuration");
 	err = setupConfigure(&args.params);
 	if (err != 0) goto cleanup;
 
-	if (!args.params.destroyFirst || args.params.srcFile != NULL) {
-		lprintln(LogInfo, "Beginning network construction");
-		err = setupGraphML(&args.gmlParams);
+	if (!args.params.destroyOnly) {
+		if (args.params.keepOldNetworks) {
+			lprintln(LogInfo, "Preserving existing virtual networks as requested");
+		} else {
+			err = destroyNetwork();
+		}
+
+		if (err == 0) {
+			lprintln(LogInfo, "Beginning network construction");
+			err = setupGraphML(&args.gmlParams);
+		}
 	}
 
 	if (err != 0) {
