@@ -34,8 +34,6 @@
 #include "net.h"
 #include "version.h"
 
-// TODO: allow multiple other-edge values in the setup file
-
 enum {
 	AcRuleIn = 256,
 	AcRuleOut,
@@ -87,10 +85,19 @@ static size_t currentClient;
 static error_t parseArg(int key, char* arg, struct argp_state* state, unsigned int argNum) {
 	switch (key) {
 	case 'e': {
-		ip4Subnet edgeNet;
-		if (!ip4GetSubnet(arg, &edgeNet)) return 1;
-		flexBufferGrow(&args.netBuf, args.edgeNetCount, &args.netBufCap, 1, sizeof(ip4Subnet));
-		flexBufferAppend(args.netBuf, &args.edgeNetCount, &edgeNet, 1, sizeof(ip4Subnet));
+		// This is one of the rare cases where strtok is the best solution:
+		// - Adjacent commas *should* be merged
+		// - We don't care about the identity of the delimiter because there is only one
+		// - It's okay if the string is modified because it's already a copy and it will not be used again
+		// - The program is single-threaded (at this point) and nothing else needs strtok
+		char* ipStr = strtok(arg, ",");
+		while (ipStr != NULL) {
+			ip4Subnet edgeNet;
+			if (!ip4GetSubnet(ipStr, &edgeNet)) return 1;
+			flexBufferGrow(&args.netBuf, args.edgeNetCount, &args.netBufCap, 1, sizeof(ip4Subnet));
+			flexBufferAppend(args.netBuf, &args.edgeNetCount, &edgeNet, 1, sizeof(ip4Subnet));
+			ipStr = strtok(NULL, ",");
+		}
 		break;
 	}
 	case 'c': {
@@ -309,7 +316,9 @@ static int applyConfiguration(void) {
 	if (err != 0 && !args.remove) return err;
 
 	for (size_t i = 0; i < args.edgeNetCount; ++i) {
-		err = netModifyRoute(net, args.remove, args.outgoingTableId, ScopeGlobal, CreatorAdmin, args.edgeNets[i].addr, args.edgeNets[i].prefixLen, args.coreIp, intfIdx, true);
+		ip4Subnet* edgeNet = &args.edgeNets[i];
+		if (edgeNet->addr == args.myNet.addr && edgeNet->prefixLen == args.myNet.prefixLen) continue;
+		err = netModifyRoute(net, args.remove, args.outgoingTableId, ScopeGlobal, CreatorAdmin, edgeNet->addr, edgeNet->prefixLen, args.coreIp, intfIdx, true);
 		if (err != 0 && !args.remove) return err;
 	}
 
@@ -374,22 +383,22 @@ int main(int argc, char** argv) {
 
 	// Command-line switch definitions
 	struct argp_option generalOptions[] = {
-			{ "other-edge", 'e', "CIDR", 0, "Specifies a subnet that belongs to the NetMirage virtual address space. Any traffic to this subnet will be routed through the core node.", 0 },
-			{ "clients",    'c', "COUNT", 0, "Specifies the number of client nodes in the core topology associated with this edge node. If this is NOT given, then IP addresses will be allocated sequentially from the subnet. If it IS given, then addresses will be sampled from each client node subnet in a round-robin pattern.", 0 },
+			{ "other-edges", 'e', "CSV-CIDR", 0, "Specifies comma-separated CIDR format subnets that belong to the NetMirage virtual address space (other than our own subnet). Any traffic to these subnets will be routed through the core node.", 0 },
+			{ "clients",     'c', "COUNT", 0, "Specifies the number of client nodes in the core topology associated with this edge node. If this is NOT given, then IP addresses will be allocated sequentially from the subnet. If it IS given, then addresses will be sampled from each client node subnet in a round-robin pattern.", 0 },
 
-			{ "remove",     'r', NULL, OPTION_ARG_OPTIONAL, "If specified, the program will attempt to remove a previously created configuration. No new routes will be configured. Note that the program must be called with the exact same network configuration that was used to create the previous setup.", 1 },
+			{ "remove",      'r', NULL, OPTION_ARG_OPTIONAL, "If specified, the program will attempt to remove a previously created configuration. No new routes will be configured. Note that the program must be called with the exact same network configuration that was used to create the previous setup.", 1 },
 
-			{ "ip-file",    'I', "FILE", 0, "If specified, IP addresses allocated for applications are written to this file (one per line). A value of \"-\" indicates that the addresses should be written to stdout.", 2 },
+			{ "ip-file",     'I', "FILE", 0, "If specified, IP addresses allocated for applications are written to this file (one per line). A value of \"-\" indicates that the addresses should be written to stdout.", 2 },
 
-			{ "verbosity",  'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
-			{ "log-file",   'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors may still be written to stderr.", 3 },
+			{ "verbosity",   'v', "{debug,info,warning,error}", 0, "Verbosity of log output (default: warning).", 3 },
+			{ "log-file",    'l', "FILE",                       0, "Log output to FILE instead of stderr. Note: configuration errors may still be written to stderr.", 3 },
 
-			{ "rule-in",    AcRuleIn,    "PRIORITY", 0, "Optional routing rule priority for incoming packets.", 4 },
-			{ "rule-out",   AcRuleOut,   "PRIORITY", 0, "Optional routing rule priority for outgoing packets.", 4 },
-			{ "rule-other", AcRuleOther, "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 4 },
-			{ "table-id",   AcTableId,   "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 4 },
+			{ "rule-in",     AcRuleIn,    "PRIORITY", 0, "Optional routing rule priority for incoming packets.", 4 },
+			{ "rule-out",    AcRuleOut,   "PRIORITY", 0, "Optional routing rule priority for outgoing packets.", 4 },
+			{ "rule-other",  AcRuleOther, "PRIORITY", 0, "Optional routing rule priority for default local routing table lookups.", 4 },
+			{ "table-id",    AcTableId,   "ID", 0, "Optional identifier for the routing table used by outgoing packets.", 4 },
 
-			{ "setup-file", 's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"applications\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 5 },
+			{ "setup-file",  's', "FILE", 0, "Specifies a file that contains default configuration settings. This file is a key-value file (similar to an .ini file). Values should be added to the \"edge\" group. This group may contain any of the long names for command arguments. Note that any file paths specified in the setup file are relative to the current working directory (not the file location). Any arguments passed on the command line override the defaults and those set in the setup file. The non-option arguments can be specified using the \"iface\", \"core-ip\", \"vsubnet\", and \"applications\" keys. By default, the program attempts to read setup information from " DEFAULT_SETUP_FILE ".", 5 },
 
 			{ NULL },
 	};

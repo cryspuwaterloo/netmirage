@@ -388,11 +388,15 @@ static bool gmlNextEdge(gmlContext* ctx) {
 
 	if (edgeFile != NULL) {
 		fprintf(edgeFile, "netmirage-edge");
-		for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
-			edgeNodeParams* otherEdge = &globalParams->edgeNodes[i];
-			char otherEdgeSubnet[IP4_CIDR_BUFLEN];
-			ip4SubnetToString(&otherEdge->vsubnet, otherEdgeSubnet);
-			fprintf(edgeFile, " -e %s", otherEdgeSubnet);
+		if (globalParams->edgeNodeCount > 1) {
+			fprintf(edgeFile, " -e ");
+			for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
+				edgeNodeParams *otherEdge = &globalParams->edgeNodes[i];
+				char otherEdgeSubnet[IP4_CIDR_BUFLEN];
+				ip4SubnetToString(&otherEdge->vsubnet, otherEdgeSubnet);
+				if (i > 0) fprintf(edgeFile, ",");
+				fprintf(edgeFile, "%s", otherEdgeSubnet);
+			}
 		}
 		fprintf(edgeFile, " -c %u", currentEdgeCapacity);
 		if (edge->remoteDev == NULL) {
