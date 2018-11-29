@@ -431,6 +431,24 @@ int ovsDelBridge(ovsContext* ctx, const char* name) {
 	return err;
 }
 
+int ovsSetBridgeMtu(ovsContext* ctx, const char* bridge, int mtu) {
+	if (mtu <= 0) {
+		lprintf(LogError, "Requested MTU for OVS bridge is non-positive (%d)\n", mtu);
+		return 1;
+	}
+
+	int err = switchContext(ctx);
+	if (err != 0) return err;
+
+	lprintf(LogDebug, "Setting MTU to %d for Open vSwitch bridge '%s' in context %p\n", mtu, bridge, ctx);
+
+	char mtuStr[12 + (CHAR_BIT * sizeof(int) / 3) + 3];
+	sprintf(mtuStr, "mtu_request=%d", mtu);
+
+	err = ovsCommand(ctx->directory, "ovs-vsctl", ctx->compatArgs, ctx->dbSocketConnArg, "set", "int", bridge, mtuStr, NULL);
+	return err;
+}
+
 int ovsAddPort(ovsContext* ctx, const char* bridge, const char* intfName) {
 	int err = switchContext(ctx);
 	if (err != 0) return err;

@@ -66,6 +66,7 @@ int setupInit(void) {
 
 int setupConfigure(const setupParams* params) {
 	globalParams = params;
+
 	DO_OR_RETURN(workConfigure(logThreshold(), logColorized(), params->nsPrefix, params->ovsDir, params->ovsSchema, params->softMemCap));
 	DO_OR_RETURN(workJoin(false));
 
@@ -76,6 +77,13 @@ int setupConfigure(const setupParams* params) {
 	if (params->edgeNodeCount < 1) {
 		lprintln(LogError, "No edge nodes were specified. Configure them using a setup file or manually using --edge-node.");
 		return 1;
+	}
+
+	if (params->keepOldNetworks) {
+		lprintln(LogInfo, "Preserving existing virtual networks as requested");
+	} else {
+		int err = destroyNetwork();
+		if (err != 0) return err;
 	}
 
 	// Complete definitions for edge nodes by filling in default / missing data
@@ -201,6 +209,8 @@ typedef struct {
 	size_t nodeCap;
 	GHashTable* gmlToState; // Maps GraphML names to indices in nodeStates
 
+	int mtu;
+
 	double clientsPerEdge;
 	nodeId currentEdgeIdx;
 	nodeId currentEdgeClients;
@@ -285,7 +295,7 @@ static int gmlAddNode(const GmlNode* node, void* userData) {
 		lprintf(LogDebug, "GraphML node '%s' assigned identifier %u and IP address %s\n", node->name, id, ip);
 	}
 
-	DO_OR_RETURN(workAddHost(id, state->addr, state->clientMacs, &node->t));
+	DO_OR_RETURN(workAddHost(id, state->addr, state->clientMacs, ctx->mtu, &node->t));
 	return 0;
 }
 
@@ -333,7 +343,7 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			lprintln(LogError, "Ran out of MAC addresses when adding a new virtual ethernet connection.");
 			return 1;
 		}
-		DO_OR_RETURN(workAddLink(sourceId, targetId, sourceState->addr, targetState->addr, macs, &link->t));
+		DO_OR_RETURN(workAddLink(sourceId, targetId, sourceState->addr, targetState->addr, macs, ctx->mtu, &link->t));
 		if (link->weight < 0.f) {
 			lprintf(LogError, "The link from '%s' to '%s' in the topology has negative weight %f, which is not supported.\n", link->sourceName, link->targetName, link->weight);
 			return 1;
@@ -475,7 +485,26 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		}
 	}
 
-	DO_OR_GOTO(workAddRoot(rootAddrs[0], rootAddrs[1], globalParams->rootIsInitNs), cleanup, err);
+	// Determine the common MTU for all edge interfaces
+	ctx.mtu = 0;
+	for (size_t i = 0; i < globalParams->edgeNodeCount; ++i) {
+		edgeNodeParams *edge = &globalParams->edgeNodes[i];
+		int edgeMtu;
+		DO_OR_GOTO(workGetInterfaceMtu(edge->intf, &edgeMtu), cleanup, err);
+		if (edgeMtu <= 0) {
+			lprintf(LogError, "Interface %s has non-positive MTU: %d\n", edge->intf, edgeMtu);
+		}
+		if (ctx.mtu <= 0) {
+			ctx.mtu = edgeMtu;
+			lprintf(LogDebug, "Using edge MTU %d for network\n", ctx.mtu);
+		} else if (edgeMtu != ctx.mtu) {
+			lprintf(LogError, "Edge interfaces have different MTUs. All interfaces must share the same MTU to avoid segmentation problems. Interface %s has MTU %d, but interface %s has MTU %d.", globalParams->edgeNodes[0].intf, ctx.mtu, edge->intf, edgeMtu);
+			err = 1;
+			goto cleanup;
+		}
+	}
+
+	DO_OR_GOTO(workAddRoot(rootAddrs[0], rootAddrs[1], ctx.mtu, globalParams->rootIsInitNs), cleanup, err);
 	DO_OR_GOTO(workJoin(false), cleanup, err);
 
 	// Move all interfaces associated with edge nodes into the root namespace

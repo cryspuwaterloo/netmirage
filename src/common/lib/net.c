@@ -517,7 +517,9 @@ int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netCo
 	nlInitMessage(srcNl, RTM_NEWLINK, NLM_F_ACK);
 	nlBufferAppend(srcNl, &linkAttrs.msg.ifi, sizeof(linkAttrs.msg.ifi));
 	nlPushAttr(srcNl, IFLA_NET_NS_FD);
+	{
 		nlBufferAppend(srcNl, &dstCtx->fd, sizeof(dstCtx->fd));
+	}
 	nlPopAttr(srcNl);
 	err = nlSendMessage(srcNl, true, NULL, NULL);
 	if (err != 0) goto cleanup;
@@ -558,7 +560,7 @@ cleanup:
 	return err;
 }
 
-int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, bool sync) {
+int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, int mtu, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		lprintHead(LogDebug);
 		lprintDirectf(LogDebug, "Creating virtual ethernet pair (%p:'%s', %p:'%s')", ctx1, name1, ctx2, name2);
@@ -571,6 +573,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 			macAddrToString(addr2, mac);
 			lprintDirectf(LogDebug, ", mac2=%s", mac);
 		}
+		lprintDirectf(LogDebug, ", mtu=%d", mtu);
 		lprintDirectf(LogDebug, "\n");
 		lprintDirectFinish(LogDebug);
 	}
@@ -585,39 +588,77 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 	nlBufferAppend(nl, &ifi, sizeof(ifi));
 
 	nlPushAttr(nl, IFLA_IFNAME);
-		nlBufferAppend(nl, name1, strlen(name1)+1);
+	{
+		nlBufferAppend(nl, name1, strlen(name1) + 1);
+	}
 	nlPopAttr(nl);
 
 	nlPushAttr(nl, IFLA_NET_NS_FD);
+	{
 		nlBufferAppend(nl, &ctx1->fd, sizeof(ctx1->fd));
+	}
 	nlPopAttr(nl);
 
 	if (addr1 != NULL) {
 		nlPushAttr(nl, IFLA_ADDRESS);
+		{
 			nlBufferAppend(nl, addr1->octets, MAC_ADDR_BYTES);
+		}
+		nlPopAttr(nl);
+	}
+
+	uint32_t writeMtu = 0;
+	if (mtu > 0) writeMtu = (uint32_t)mtu;
+
+	if (writeMtu > 0) {
+		nlPushAttr(nl, IFLA_MTU);
+		{
+			nlBufferAppend(nl, &writeMtu, sizeof(writeMtu));
+		}
 		nlPopAttr(nl);
 	}
 
 	nlPushAttr(nl, IFLA_LINKINFO);
+	{
 		nlPushAttr(nl, IFLA_INFO_KIND);
+		{
 			nlBufferAppend(nl, "veth", 4);
+		}
 		nlPopAttr(nl);
 		nlPushAttr(nl, IFLA_INFO_DATA);
+		{
 			nlPushAttr(nl, 1); // VETH_INFO_PEER
+			{
 				nlBufferAppend(nl, &ifi, sizeof(ifi));
 				nlPushAttr(nl, IFLA_IFNAME);
-					nlBufferAppend(nl, name2, strlen(name2)+1);
+				{
+					nlBufferAppend(nl, name2, strlen(name2) + 1);
+				}
 				nlPopAttr(nl);
 				nlPushAttr(nl, IFLA_NET_NS_FD);
+				{
 					nlBufferAppend(nl, &ctx2->fd, sizeof(ctx2->fd));
+				}
 				nlPopAttr(nl);
 				if (addr2 != NULL) {
 					nlPushAttr(nl, IFLA_ADDRESS);
+					{
 						nlBufferAppend(nl, addr2->octets, MAC_ADDR_BYTES);
+					}
 					nlPopAttr(nl);
 				}
+				if (writeMtu > 0) {
+					nlPushAttr(nl, IFLA_MTU);
+					{
+						nlBufferAppend(nl, &writeMtu, sizeof(writeMtu));
+					}
+					nlPopAttr(nl);
+				}
+			}
 			nlPopAttr(nl);
+		}
 		nlPopAttr(nl);
+	}
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);
@@ -696,20 +737,28 @@ int netModifyInterfaceAddrIPv4(netContext* ctx, bool remove, int devIdx, ip4Addr
 
 	if (addr > 0) {
 		nlPushAttr(nl, IFA_LOCAL);
+		{
 			nlBufferAppend(nl, &addr, sizeof(addr));
+		}
 		nlPopAttr(nl);
 		nlPushAttr(nl, IFA_ADDRESS);
+		{
 			nlBufferAppend(nl, &addr, sizeof(addr));
+		}
 		nlPopAttr(nl);
 	}
 	if (broadcastAddr > 0) {
 		nlPushAttr(nl, IFA_BROADCAST);
+		{
 			nlBufferAppend(nl, &addr, sizeof(addr));
+		}
 		nlPopAttr(nl);
 	}
 	if (anycastAddr > 0) {
 		nlPushAttr(nl, IFA_ANYCAST);
+		{
 			nlBufferAppend(nl, &addr, sizeof(addr));
+		}
 		nlPopAttr(nl);
 	}
 
@@ -819,25 +868,31 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	nlBufferAppend(nl, &tcm, sizeof(tcm));
 
 	nlPushAttr(nl, TCA_KIND);
+	{
 		nlBufferAppend(nl, "netem", 6);
+	}
 	nlPopAttr(nl);
 
 	nlPushAttr(nl, TCA_OPTIONS);
-		struct tc_netem_qopt opt = { .gap = 0, .duplicate = 0 };
-		opt.latency = (__u32)llrint(delayMs * pschedTicksPerMs);
-		opt.jitter = (__u32)llrint(jitterMs * pschedTicksPerMs);
+	{
+		struct tc_netem_qopt opt = {.gap = 0, .duplicate = 0};
+		opt.latency = (__u32) llrint(delayMs * pschedTicksPerMs);
+		opt.jitter = (__u32) llrint(jitterMs * pschedTicksPerMs);
 		opt.limit = (queueLen > 0 ? queueLen : defaultQueueLen);
-		opt.loss = (__u32)llrint(lossRate * UINT32_MAX);
+		opt.loss = (__u32) llrint(lossRate * UINT32_MAX);
 		nlBufferAppend(nl, &opt, sizeof(opt));
 
 		if (rateMbit > 0.0) {
 			nlPushAttr(nl, TCA_NETEM_RATE);
-				struct tc_netem_rate rate = { .packet_overhead = 0, .cell_size = 0, .cell_overhead = 0 };
+			{
+				struct tc_netem_rate rate = {.packet_overhead = 0, .cell_size = 0, .cell_overhead = 0};
 				// Convert the rate from Mbit/s to byte/s
-				rate.rate = (__u32)llrint(1000.0 * 1000.0 / 8.0 * rateMbit);
+				rate.rate = (__u32) llrint(1000.0 * 1000.0 / 8.0 * rateMbit);
 				nlBufferAppend(nl, &rate, sizeof(rate));
+			}
 			nlPopAttr(nl);
 		}
+	}
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);
@@ -916,6 +971,18 @@ int netGetLocalMacAddr(netContext* ctx, const char* name, macAddr* result) {
 		macAddrToString(result, macStr);
 		lprintf(LogDebug, "Interface %p:'%s' has MAC address %s\n", ctx, name, macStr);
 	}
+	return 0;
+}
+
+int netGetMtu(netContext* ctx, const char* name, int* result) {
+	struct ifreq ifr;
+	initIfReq(&ifr);
+	int res = sendIoCtlIfReq(ctx, name, SIOCGIFMTU, NULL, &ifr);
+	if (res != 0) return res;
+
+	*result = ifr.ifr_mtu;
+
+	lprintf(LogDebug, "Interface %p:'%s' has MTU %d\n", ctx, name, *result);
 	return 0;
 }
 
@@ -1062,17 +1129,23 @@ int netModifyRoute(netContext* ctx, bool remove, uint8_t table, RoutingScope sco
 	nlBufferAppend(nl, &rtm, sizeof(rtm));
 
 	nlPushAttr(nl, RTA_DST);
+	{
 		nlBufferAppend(nl, &dstAddr, sizeof(dstAddr));
+	}
 	nlPopAttr(nl);
 
 	if (gatewayAddr != 0) {
 		nlPushAttr(nl, RTA_GATEWAY);
+		{
 			nlBufferAppend(nl, &gatewayAddr, sizeof(gatewayAddr));
+		}
 		nlPopAttr(nl);
 	}
 
 	nlPushAttr(nl, RTA_OIF);
+	{
 		nlBufferAppend(nl, &dstDevIdx, sizeof(dstDevIdx));
+	}
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);
@@ -1105,18 +1178,24 @@ int netModifyRule(netContext* ctx, bool remove, const ip4Subnet* subnet, const c
 
 	if (subnet != NULL) {
 		nlPushAttr(nl, FRA_DST);
+		{
 			nlBufferAppend(nl, &subnet->addr, sizeof(subnet->addr));
+		}
 		nlPopAttr(nl);
 	}
 
 	if (inputIntf != NULL) {
 		nlPushAttr(nl, FRA_IIFNAME);
-			nlBufferAppend(nl, inputIntf, strlen(inputIntf)+1);
+		{
+			nlBufferAppend(nl, inputIntf, strlen(inputIntf) + 1);
+		}
 		nlPopAttr(nl);
 	}
 
 	nlPushAttr(nl, FRA_PRIORITY);
+	{
 		nlBufferAppend(nl, &priority, sizeof(priority));
+	}
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);

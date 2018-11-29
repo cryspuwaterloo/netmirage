@@ -63,9 +63,14 @@ int workGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMa
 // Since this function returns a response, it automatically joins.
 int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac);
 
+// Determines the MTU of a physical interface. Assumes that the interface is in
+// the default namespace. Since this function returns a response, it
+// automatically joins.
+int workGetInterfaceMtu(const char* intfName, int* mtu);
+
 // Creates a network namespace called the "root", which provides connectivity to
 // the external world.
-int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs);
+int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther, int mtu, bool useInitNs);
 
 // Adds an external interface to the root namespace. This removes it from the
 // init namespace, so it will appear to vanish from a simple "ifconfig" listing.
@@ -78,7 +83,7 @@ int workAddEdgeInterface(const char* intfName);
 // Creates a new virtual host in its own network namespace. If the node is a
 // client, then it is connected to the root. If the node is a client, then macs
 // should contain NeededMacsClient unique addresses.
-int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node);
+int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], int mtu, const TopoNode* node);
 
 // Applies traffic shaping parameters to a client node's "self" link.
 int workSetSelfLink(nodeId id, const TopoLink* link);
@@ -89,7 +94,7 @@ int workEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clientN
 
 // Adds a virtual connection between two hosts. macs should contain
 // NeededMacsLink unique addresses.
-int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link);
+int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], int mtu, const TopoLink* link);
 
 // Adds static routing paths for internal links. Node 1 will route packets for
 // subnet2 through node 2. The reverse path is also set up.

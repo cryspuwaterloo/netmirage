@@ -93,7 +93,7 @@ int netEnumInterfaces(netIfCallback callback, netContext* ctx, void* userData);
 // Creates a virtual Ethernet pair of interfaces with endpoints in the given
 // namespaces. If the MAC addresses are not NULL, they are used to configure the
 // new interfaces.
-int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, bool sync);
+int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, int mtu, bool sync);
 
 // Returns the interface index for an interface. On error, returns -1 and sets
 // err (if provided) to the error code.
@@ -145,6 +145,10 @@ int netGetRemoteMacAddr(netContext* ctx, const char* intfName, ip4Addr ip, macAd
 // Retrieves the MAC address associated with a local interface. Returns 0 on
 // success or an error code otherwise.
 int netGetLocalMacAddr(netContext* ctx, const char* name, macAddr* result);
+
+// Retrieves the MTU for an interface. Returns 0 on success or an error code
+// otherwise.
+int netGetMtu(netContext* ctx, const char* name, int* result);
 
 // Enables or disables packet routing between interfaces in the active
 // namespace. Returns 0 on success or an error code otherwise.

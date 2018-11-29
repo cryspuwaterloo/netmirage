@@ -73,6 +73,7 @@ typedef enum {
 	WorkerConfigure,
 	WorkerGetEdgeRemoteMac,
 	WorkerGetEdgeLocalMac,
+	WorkerGetInterfaceMtu,
 	WorkerAddRoot,
 	WorkerAddEdgeInterface,
 	WorkerAddHost,
@@ -107,8 +108,12 @@ typedef struct {
 			char intfName[INTERFACE_BUF_LEN];
 		} getEdgeLocalMac;
 		struct {
+			char intfName[INTERFACE_BUF_LEN];
+		} getInterfaceMtu;
+		struct {
 			ip4Addr addrSelf;
 			ip4Addr addrOther;
+			int mtu;
 			bool useInitNs;
 			bool existing;
 		} addRoot;
@@ -116,6 +121,7 @@ typedef struct {
 			nodeId id;
 			ip4Addr ip;
 			macAddr macs[NEEDED_MACS_CLIENT];
+			int mtu;
 			TopoNode node;
 		} addHost;
 		struct {
@@ -133,6 +139,7 @@ typedef struct {
 			ip4Addr sourceIp;
 			ip4Addr targetIp;
 			macAddr macs[NEEDED_MACS_LINK];
+			int mtu;
 			TopoLink link;
 		} addLink;
 		struct {
@@ -168,6 +175,7 @@ typedef enum {
 	ResponseLogPrint,
 	ResponseLogEnd,
 	ResponseGotMac,
+	ResponseGotMtu,
 	ResponseAddedEdgeInterface,
 } WorkerResponseCode;
 
@@ -183,6 +191,9 @@ typedef struct {
 		struct {
 			macAddr mac;
 		} gotMac;
+		struct {
+			int mtu;
+		} gotMtu;
 	};
 } WorkerResponse;
 
@@ -549,15 +560,24 @@ static int childProcess(guint id) {
 				if (err == 0) writeAll(STDOUT_FILENO, &resp, sizeof(WorkerResponse));
 				break;
 			}
+			case WorkerGetInterfaceMtu: {
+				WorkerResponse resp;
+				ZERO_RESPONSE(&resp);
+				resp.code = ResponseGotMtu;
+
+				err = workerGetInterfaceMtu(order.getInterfaceMtu.intfName, &resp.gotMtu.mtu);
+				if (err == 0) writeAll(STDOUT_FILENO, &resp, sizeof(WorkerResponse));
+				break;
+			}
 			case WorkerAddRoot:
-				err = workerAddRoot(order.addRoot.addrSelf, order.addRoot.addrOther, order.addRoot.useInitNs, order.addRoot.existing);
+				err = workerAddRoot(order.addRoot.addrSelf, order.addRoot.addrOther, order.addRoot.mtu, order.addRoot.useInitNs, order.addRoot.existing);
 				break;
 			case WorkerAddEdgeInterface: {
 				err = workerAddEdgeInterface(order.addEdgeInterface.intfName);
 				break;
 			}
 			case WorkerAddHost:
-				err = workerAddHost(order.addHost.id, order.addHost.ip, order.addHost.macs, &order.addHost.node);
+				err = workerAddHost(order.addHost.id, order.addHost.ip, order.addHost.macs, order.addHost.mtu, &order.addHost.node);
 				break;
 			case WorkerSetSelfLink:
 				err = workerSetSelfLink(order.setSelfLink.id, &order.setSelfLink.link);
@@ -566,7 +586,7 @@ static int childProcess(guint id) {
 				err = workerEnsureSystemScaling(order.ensureSystemScaling.linkCount, order.ensureSystemScaling.nodeCount, order.ensureSystemScaling.clientNodes);
 				break;
 			case WorkerAddLink:
-				err = workerAddLink(order.addLink.sourceId, order.addLink.targetId, order.addLink.sourceIp, order.addLink.targetIp, order.addLink.macs, &order.addLink.link);
+				err = workerAddLink(order.addLink.sourceId, order.addLink.targetId, order.addLink.sourceIp, order.addLink.targetIp, order.addLink.macs, order.addLink.mtu, &order.addLink.link);
 				break;
 			case WorkerAddInternalRoutes:
 				err = workerAddInternalRoutes(order.addInternalRoutes.id1, order.addInternalRoutes.id2, order.addInternalRoutes.ip1, order.addInternalRoutes.ip2, &order.addInternalRoutes.subnet1, &order.addInternalRoutes.subnet2);
@@ -842,10 +862,26 @@ int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac) {
 	return err;
 }
 
-int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs) {
+int workGetInterfaceMtu(const char* intfName, int* mtu) {
+	WorkerOrder* order = newOrder(WorkerGetInterfaceMtu);
+	strncpy(order->getInterfaceMtu.intfName, intfName, INTERFACE_BUF_LEN);
+	int err = sendOrder(order, false);
+	if (err != 0) return err;
+
+	g_mutex_lock(&workMain.lock);
+	err = waitForResponse(ResponseGotMtu);
+	if (err == 0) {
+		*mtu = workMain.response.gotMtu.mtu;
+	}
+	g_mutex_unlock(&workMain.lock);
+	return err;
+}
+
+int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther, int mtu, bool useInitNs) {
 	WorkerOrder* loadOrder = newOrder(WorkerAddRoot);
 	loadOrder->addRoot.addrSelf = addrSelf;
 	loadOrder->addRoot.addrOther = addrOther;
+	loadOrder->addRoot.mtu = mtu;
 	loadOrder->addRoot.useInitNs = useInitNs;
 	loadOrder->addRoot.existing = true;
 
@@ -872,7 +908,7 @@ int workAddEdgeInterface(const char* intfName) {
 	return sendOrder(order, false);
 }
 
-int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
+int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], int mtu, const TopoNode* node) {
 	WorkerOrder* order = newOrder(WorkerAddHost);
 	order->addHost.id = id;
 	order->addHost.ip = ip;
@@ -881,6 +917,7 @@ int workAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 			memcpy(order->addHost.macs[i].octets, macs[i].octets, MAC_ADDR_BYTES);
 		}
 	}
+	order->addHost.mtu = mtu;
 	order->addHost.node = *node;
 	return sendOrder(order, false);
 }
@@ -900,7 +937,7 @@ int workEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clientN
 	return sendOrder(order, false);
 }
 
-int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link) {
+int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], int mtu, const TopoLink* link) {
 	WorkerOrder* order = newOrder(WorkerAddLink);
 	order->addLink.sourceId = sourceId;
 	order->addLink.targetId = targetId;
@@ -909,6 +946,7 @@ int workAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targ
 	for (int i = 0; i < NEEDED_MACS_LINK; ++i) {
 		memcpy(order->addLink.macs[i].octets, macs[i].octets, MAC_ADDR_BYTES);
 	}
+	order->addLink.mtu = mtu;
 	order->addLink.link = *link;
 	return sendOrder(order, false);
 }

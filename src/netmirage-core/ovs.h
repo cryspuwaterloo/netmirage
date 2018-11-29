@@ -62,6 +62,9 @@ int ovsAddBridge(ovsContext* ctx, const char* name);
 // or an error code otherwise.
 int ovsDelBridge(ovsContext* ctx, const char* name);
 
+// Sets the MTU for a bridge. Returns 0 on success or an error code otherwise.
+int ovsSetBridgeMtu(ovsContext* ctx, const char* bridge, int mtu);
+
 // Adds a port to the bridge in the given Open vSwitch instance. If portId is
 // not NULL, it is set to the new port index. Returns 0 on success or an error
 // code otherwise.

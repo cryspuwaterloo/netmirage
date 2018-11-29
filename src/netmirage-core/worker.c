@@ -223,6 +223,10 @@ int workerGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac) {
 	return netGetLocalMacAddr(rootNet, intfName, edgeLocalMac);
 }
 
+int workerGetInterfaceMtu(const char* intfName, int* mtu) {
+	return netGetMtu(defaultNet, intfName, mtu);
+}
+
 static int applyNamespaceParams(void) {
 	int err = netSetForwarding(true);
 	if (err != 0) return err;
@@ -255,9 +259,10 @@ static int buildVethPair(netContext* sourceNet, netContext* targetNet,
 		const char* sourceIntf, const char* targetIntf,
 		ip4Addr sourceIp, ip4Addr targetIp,
 		const macAddr* sourceMac, const macAddr* targetMac,
+		int mtu,
 		int* sourceIntfIdx, int* targetIntfIdx) {
 
-	int err = netCreateVethPair(sourceIntf, targetIntf, sourceNet, targetNet, sourceMac, targetMac, true);
+	int err = netCreateVethPair(sourceIntf, targetIntf, sourceNet, targetNet, sourceMac, targetMac, mtu, true);
 	if (err != 0) return err;
 
 	err = applyInterfaceParams(sourceNet, sourceIntf, sourceIp, sourceIntfIdx);
@@ -279,7 +284,7 @@ static int buildVethPair(netContext* sourceNet, netContext* targetNet,
 // has already created the namespace, then the command is ignored. This is
 // useful because we can instruct a single worker to create the namespace, and
 // tell all others to use the same one.
-int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs, bool existing) {
+int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, int mtu, bool useInitNs, bool existing) {
 	if (existing && rootNet != NULL) {
 		lprintln(LogDebug, "Root creation command ignored because we created the namespace earlier");
 		return 0;
@@ -296,6 +301,9 @@ int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs, bool exis
 		if (err != 0) return err;
 
 		err = ovsAddBridge(rootSwitch, RootBridgeName);
+		if (err != 0) return err;
+
+		err = ovsSetBridgeMtu(rootSwitch, RootBridgeName, mtu);
 		if (err != 0) return err;
 
 		// Reject everything initially, but switch ARP normally
@@ -348,7 +356,7 @@ static void sprintRootUpIntf(char* buf, nodeId id) {
 	sprintf(buf, "%s-%u", NodeLinkPrefix, id);
 }
 
-int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
+int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], int mtu, const TopoNode* node) {
 	char nodeName[MAX_NODE_ID_BUFLEN];
 	idToNsName(id, nodeName);
 
@@ -370,7 +378,7 @@ int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 		int sourceIntfIdx, targetIntfIdx;
 
 		// Self link (used for intra-client communication)
-		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIpSelf, &macs[MAC_CLIENT_SELF], &macs[MAC_ROOT_SELF], &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, SelfLinkPrefix, intfBuf, ip, rootIpSelf, &macs[MAC_CLIENT_SELF], &macs[MAC_ROOT_SELF], mtu, &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 		// We don't apply shaping to the self link until we read a reflexive
 		// edge from the input file (handled in workAddLink). However, we add
@@ -380,7 +388,7 @@ int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node) {
 		sprintRootUpIntf(intfBuf, id);
 
 		// Up / down link (used for inter-client communication)
-		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIpOther, &macs[MAC_CLIENT_OTHER], &macs[MAC_ROOT_OTHER], &sourceIntfIdx, &targetIntfIdx);
+		err = buildVethPair(net, rootNet, RootLinkPrefix, intfBuf, ip, rootIpOther, &macs[MAC_CLIENT_OTHER], &macs[MAC_ROOT_OTHER], mtu, &sourceIntfIdx, &targetIntfIdx);
 		if (err != 0) return err;
 
 		err = netSetEgressShaping(net, sourceIntfIdx, 0, 0, node->packetLoss, node->bandwidthDown, 0, true);
@@ -466,7 +474,7 @@ int workerEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clien
 	return 0;
 }
 
-int workerAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link) {
+int workerAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], int mtu, const TopoLink* link) {
 	char sourceName[MAX_NODE_ID_BUFLEN];
 	char targetName[MAX_NODE_ID_BUFLEN];
 	netContext* sourceNet;
@@ -482,7 +490,7 @@ int workerAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr ta
 
 	int sourceIntfIdx, targetIntfIdx;
 
-	err = buildVethPair(sourceNet, targetNet, sourceIntf, targetIntf, sourceIp, targetIp, &macs[0], &macs[1], &sourceIntfIdx, &targetIntfIdx);
+	err = buildVethPair(sourceNet, targetNet, sourceIntf, targetIntf, sourceIp, targetIp, &macs[0], &macs[1], mtu, &sourceIntfIdx, &targetIntfIdx);
 	if (err != 0) return err;
 
 	err = netSetEgressShaping(sourceNet, sourceIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);

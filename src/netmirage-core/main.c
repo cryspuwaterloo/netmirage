@@ -350,16 +350,8 @@ int main(int argc, char** argv) {
 	if (err != 0) goto cleanup;
 
 	if (!args.params.destroyOnly) {
-		if (args.params.keepOldNetworks) {
-			lprintln(LogInfo, "Preserving existing virtual networks as requested");
-		} else {
-			err = destroyNetwork();
-		}
-
-		if (err == 0) {
-			lprintln(LogInfo, "Beginning network construction");
-			err = setupGraphML(&args.gmlParams);
-		}
+		lprintln(LogInfo, "Beginning network construction");
+		err = setupGraphML(&args.gmlParams);
 	}
 
 	if (err != 0) {

@@ -49,12 +49,13 @@ int workerCleanup(void);
 // Actual order implementations. See work.h for documentation.
 int workerGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMac);
 int workerGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac);
-int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, bool useInitNs, bool existing);
+int workerGetInterfaceMtu(const char* intfName, int* mtu);
+int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, int mtu, bool useInitNs, bool existing);
 int workerAddEdgeInterface(const char* intfName);
-int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], const TopoNode* node);
+int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], int mtu, const TopoNode* node);
 int workerSetSelfLink(nodeId id, const TopoLink* link);
 int workerEnsureSystemScaling(uint64_t linkCount, nodeId nodeCount, nodeId clientNodes);
-int workerAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], const TopoLink* link);
+int workerAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr targetIp, macAddr macs[], int mtu, const TopoLink* link);
 int workerAddInternalRoutes(nodeId id1, nodeId id2, ip4Addr ip1, ip4Addr ip2, const ip4Subnet* subnet1, const ip4Subnet* subnet2);
 int workerAddClientRoutes(nodeId clientId, macAddr clientMacs[], const ip4Subnet* subnet, uint32_t edgePort, uint32_t clientPorts[]);
 int workerAddEdgeRoutes(const ip4Subnet* edgeSubnet, uint32_t edgePort, const macAddr* edgeLocalMac, const macAddr* edgeRemoteMac);
