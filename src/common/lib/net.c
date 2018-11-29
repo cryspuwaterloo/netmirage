@@ -531,11 +531,6 @@ int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netCo
 	addrAttrs.msg.ifa.ifa_index = (__u32)idx;
 	if (newIdx != NULL) *newIdx = idx;
 
-	// TODO Switching namespaces should not be necessary, but is. This is a bug
-	// somewhere (either in our code, or the kernel).
-	err = netSwitchNamespace(dstCtx);
-	if (err != 0) goto cleanup;
-
 	// Set old link attributes
 	if (linkAttrs.rtAttrSize > 0) {
 		nlInitMessage(dstNl, RTM_NEWLINK, NLM_F_ACK);
