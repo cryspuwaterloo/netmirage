@@ -114,6 +114,16 @@ bool ip4SubnetHasReserved(const ip4Subnet* subnet) {
 	return (subnet->prefixLen <= 30);
 }
 
+bool ip4SubnetsOverlap(const ip4Subnet* subnet1, const ip4Subnet* subnet2) {
+	ip4Addr mask;
+	if (subnet1->prefixLen < subnet2->prefixLen) {
+		mask = ip4SubnetMask(subnet1);
+	} else {
+		mask = ip4SubnetMask(subnet2);
+	}
+	return ((subnet1->addr & mask) == (subnet2->addr & mask));
+}
+
 int ip4SubnetToString(const ip4Subnet* subnet, char* buffer) {
 	char ip[IP4_ADDR_BUFLEN];
 	int res = ip4AddrToString(subnet->addr, ip);

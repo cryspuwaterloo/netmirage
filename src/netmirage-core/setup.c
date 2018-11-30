@@ -135,8 +135,6 @@ int setupConfigure(const setupParams* params) {
 		}
 	}
 
-	// TODO scan for subnet overlaps
-
 	for (size_t i = 0; i < params->edgeNodeCount; ++i) {
 		edgeNodeParams* edge = &params->edgeNodes[i];
 		char ip[IP4_ADDR_BUFLEN];
@@ -147,6 +145,22 @@ int setupConfigure(const setupParams* params) {
 		ip4SubnetToString(&edge->vsubnet, subnet);
 		lprintf(LogInfo, "Configured edge node: IP %s, interface %s, MAC %s, client subnet %s\n", ip, edge->intf, mac, subnet);
 	}
+
+	for (size_t i = 0; i < params->edgeNodeCount; ++i) {
+		edgeNodeParams* edge1 = &params->edgeNodes[i];
+		for (size_t j = i + 1; j < params->edgeNodeCount; ++j) {
+			edgeNodeParams* edge2 = &params->edgeNodes[j];
+			if (ip4SubnetsOverlap(&edge1->vsubnet, &edge2->vsubnet)) {
+				char subnet1[IP4_CIDR_BUFLEN];
+				char subnet2[IP4_CIDR_BUFLEN];
+				ip4SubnetToString(&edge1->vsubnet, subnet1);
+				ip4SubnetToString(&edge2->vsubnet, subnet2);
+				lprintf(LogError, "The subnets assigned to edge nodes overlap. The subnets must all be disjoint. Subnet %s overlaps with subnet %s\n", subnet1, subnet2);
+				subnetErr = true;
+			}
+		}
+	}
+
 	if (subnetErr) return 1;
 
 	if (!params->quiet) {
