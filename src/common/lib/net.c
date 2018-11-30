@@ -33,6 +33,7 @@
 #include "net.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>
@@ -157,7 +158,7 @@ int netInit(const char* prefix) {
 		return errno;
 	}
 	uint32_t unused, nsPerTick;
-	if (fscanf(fd, "%08x %08x ", &unused, &nsPerTick) < 2) {
+	if (fscanf(fd, "%08" SCNx32 " %08" SCNx32 " ", &unused, &nsPerTick) < 2) {
 		lprintln(LogError, "Failed to read psched parameter file ('" PSCHED_PARAM_FILE "')");
 	}
 	fclose(fd);

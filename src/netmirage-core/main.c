@@ -17,6 +17,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with NetMirage. If not, see <http://www.gnu.org/licenses/>.
  *******************************************************************************/
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -39,7 +40,6 @@
 // TODO: more specific error codes than 1
 // TODO: normalize (return result, out err) vs (return err, out result)
 // TODO: normalize res and err
-// TODO: use inttypes.h for scanf
 
 // Argument data recovered by argp
 static struct {
@@ -95,7 +95,7 @@ static bool addEdgeNode(const char* ipStr, const char* intfStr, const char* macS
 	}
 	params.remoteApps = 0;
 	if (remoteApps != NULL) {
-		sscanf(remoteApps, "%u", &params.remoteApps);
+		sscanf(remoteApps, "%" SCNu32, &params.remoteApps);
 	}
 	flexBufferGrow((void**)&args.params.edgeNodes, args.params.edgeNodeCount, &args.edgeNodeCap, 1, sizeof(edgeNodeParams));
 	flexBufferAppend(args.params.edgeNodes, &args.params.edgeNodeCount, &params, 1, sizeof(edgeNodeParams));

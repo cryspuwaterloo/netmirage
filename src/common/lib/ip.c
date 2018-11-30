@@ -21,6 +21,7 @@
 
 #include <errno.h>
 #include <fenv.h>
+#include <inttypes.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -300,9 +301,9 @@ void ip4FreeFragIter(ip4FragIter* it) {
 }
 
 bool macGetAddr(const char* str, macAddr* addr) {
-	int octets[MAC_ADDR_BYTES];
+	uint8_t octets[MAC_ADDR_BYTES];
 	char overflow;
-	int foundOctets = sscanf(str, "%02x:%02x:%02x:%02x:%02x:%02x%c", &octets[0], &octets[1], &octets[2], &octets[3], &octets[4], &octets[5], &overflow);
+	int foundOctets = sscanf(str, "%02" SCNx8 ":%02" SCNx8 ":%02" SCNx8 ":%02" SCNx8 ":%02" SCNx8 ":%02" SCNx8 "%c", &octets[0], &octets[1], &octets[2], &octets[3], &octets[4], &octets[5], &overflow);
 	if (foundOctets != MAC_ADDR_BYTES) return false;
 	for (int i = 0; i < MAC_ADDR_BYTES; ++i) {
 		addr->octets[i] = (uint8_t)octets[i];
