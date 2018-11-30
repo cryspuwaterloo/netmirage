@@ -36,6 +36,11 @@
 
 typedef struct netContext netContext;
 
+typedef struct interfaceSettings {
+	bool nsCannotMove;
+	bool nsCanNeverMove;
+} interfaceSettings;
+
 #define INTERFACE_BUF_LEN 16
 
 // Initializes the network configuration module. Max length of namespacePrefix
@@ -132,6 +137,10 @@ int netSetInterfaceGro(netContext* ctx, const char* name, bool enabled);
 // uses the traffic control default value. Returns 0 on success or an error code
 // otherwise.
 int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitterMs, double lossRate, double rateMbit, uint32_t queueLen, bool sync);
+
+// Retrieves low-level settings that apply to an interface. Returns 0 on
+// success or an error code otherwise.
+int netGetInterfaceSettings(netContext* ctx, const char* name, interfaceSettings* result);
 
 // Adds a static ARP entry to the routing table. Returns 0 on success or an
 // error code otherwise.

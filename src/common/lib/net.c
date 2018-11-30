@@ -492,13 +492,31 @@ int netMoveInterface(netContext* srcCtx, const char* intfName, int devIdx, netCo
 
 	nlContext* srcNl = &srcCtx->nl;
 	nlContext* dstNl = &dstCtx->nl;
-	int err;
 
 	netAttrBuffer linkAttrs = { .ifi = true, .findIndex = devIdx, .rtAttrs = NULL, .rtAttrSize = 0 };
 	netAttrBuffer addrAttrs = { .ifi = false, .findIndex = devIdx, .rtAttrs = NULL, .rtAttrSize = 0 };
 
 	struct ifinfomsg ifi = { .ifi_family = AF_UNSPEC, .ifi_type = 0, .ifi_flags = 0, .ifi_change = UINT_MAX };
 	struct ifaddrmsg ifa = { .ifa_family = AF_INET, .ifa_prefixlen = 0, .ifa_flags = 0, .ifa_scope = 0 };
+
+	// Before we actually move it, check to see if it is an interface of an
+	// unmmovable type (e.g., a bond).
+
+	interfaceSettings settings;
+	int err = netGetInterfaceSettings(srcCtx, intfName, &settings);
+	if (err != 0) goto cleanup;
+
+	if (settings.nsCannotMove) {
+		if (settings.nsCanNeverMove) {
+			lprintf(LogError, "Interface %s cannot be moved into the target namespace. (Hint: for netmirage-core, try passing --root-ns init)\n", intfName);
+		} else {
+			lprintf(LogError, "Interface %s cannot be move into the target namespace, but this is configurable. Try configuring the interface to be moveable with ethtool. (Hint: for netmirage-core, you can also try passing --root-ns init)\n", intfName);
+		}
+		err = 1;
+		goto cleanup;
+	}
+
+	// Now we attempt the move
 
 	// Get link attributes
 	ifi.ifi_index = devIdx;
@@ -892,6 +910,48 @@ int netSetEgressShaping(netContext* ctx, int devIdx, double delayMs, double jitt
 	nlPopAttr(nl);
 
 	return nlSendMessage(nl, sync, NULL, NULL);
+}
+
+#define NETIF_F_NETNS_LOCAL_BLOCK 0
+#define NETIF_F_NETNS_LOCAL_BIT 13
+
+static void getEthtoolFeature(struct ethtool_gfeatures* gf, size_t block, uint32_t bit, bool* active, bool* fixed) {
+	if (gf->size <= block) {
+		// This is an old kernel that does not support this feature
+		*active = false;
+		*fixed = true;
+	} else {
+		struct ethtool_get_features_block* bl = &gf->features[block];
+		*active = ((bl->active & (1u << bit)) != 0);
+		*fixed = ((bl->available & (1u << bit)) == 0) || ((bl->never_changed & (1u << bit)) == 0);
+	}
+}
+
+int netGetInterfaceSettings(netContext* ctx, const char* name, interfaceSettings* result) {
+	struct ethtool_gfeatures gfProbe;
+	gfProbe.cmd = ETHTOOL_GFEATURES;
+	gfProbe.size = 0;
+
+	struct ethtool_gfeatures* gf = NULL;
+
+	// This determines the needed feature size in gfProbe.size
+	int res = sendIoCtlIfReq(ctx, name, SIOCETHTOOL, &gfProbe, NULL);
+	if (res != 0) goto cleanup;
+
+	uint32_t featureCount = gfProbe.size;
+
+	gf = malloc(sizeof(struct ethtool_gfeatures) + sizeof(struct ethtool_get_features_block) * featureCount);
+	gf->cmd = ETHTOOL_GFEATURES;
+	gf->size = featureCount;
+
+	res = sendIoCtlIfReq(ctx, name, SIOCETHTOOL, gf, NULL);
+	if (res != 0) goto cleanup;
+
+	getEthtoolFeature(gf, NETIF_F_NETNS_LOCAL_BLOCK, NETIF_F_NETNS_LOCAL_BIT, &result->nsCannotMove, &result->nsCanNeverMove);
+
+cleanup:
+	if (gf != NULL) free(gf);
+	return res;
 }
 
 int netAddStaticArp(netContext* ctx, const char* intfName, ip4Addr ip, const macAddr* mac) {
