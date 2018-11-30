@@ -226,6 +226,7 @@ static const char* ovsCompatArgs(void) {
 			lprintf(LogDebug, "Using an OVS version ('%s') with the \"logging bug\". Using workaround.\n", ver);
 			// If this is not provided to most commands, the 2.5.0 branch
 			// crashes with an assertion failure.
+			// Confirmed still an issue in 2.10.1.
 			// TODO: This is probably an OVS bug. Report it!
 			compatArgs = "--log-file=/dev/null";
 		}
