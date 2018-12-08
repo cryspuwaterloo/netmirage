@@ -28,11 +28,6 @@ Import('verObj')
 env.Append(CPPPATH = '../auto')
 env.Append(LINKFLAGS = verObj[0].get_internal_path())
 
-env.Append(CPPPATH = '../common/inc')
-
-env.Append(LIBS = 'netmirage-common')
-env.Append(LIBPATH = '../common')
-
 Import('targetSuffix')
 app = env.Program('#bin/netmirage-core'+targetSuffix, Glob('*.c'))
 env.Requires(app, verObj)

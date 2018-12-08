@@ -52,6 +52,9 @@ bareEnv.Replace(RANLIB = 'gcc-ranlib')
 env = bareEnv.Clone()
 
 # Common dependencies
+env.Append(CPPPATH = '../common/inc')
+env.Append(LIBS = 'netmirage-common')
+env.Append(LIBPATH = '../common')
 env.ParseConfig('pkg-config --cflags --libs glib-2.0')
 
 # Configure build targets
