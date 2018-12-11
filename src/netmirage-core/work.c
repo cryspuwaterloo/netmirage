@@ -74,6 +74,7 @@ typedef enum {
 	WorkerGetEdgeRemoteMac,
 	WorkerGetEdgeLocalMac,
 	WorkerGetInterfaceMtu,
+	WorkerMtuSupported,
 	WorkerAddRoot,
 	WorkerAddEdgeInterface,
 	WorkerAddHost,
@@ -110,6 +111,9 @@ typedef struct {
 		struct {
 			char intfName[INTERFACE_BUF_LEN];
 		} getInterfaceMtu;
+		struct {
+			int mtu;
+		} mtuSupported;
 		struct {
 			ip4Addr addrSelf;
 			ip4Addr addrOther;
@@ -176,6 +180,7 @@ typedef enum {
 	ResponseLogEnd,
 	ResponseGotMac,
 	ResponseGotMtu,
+	ResponseGotMtuSupported,
 	ResponseAddedEdgeInterface,
 } WorkerResponseCode;
 
@@ -194,6 +199,10 @@ typedef struct {
 		struct {
 			int mtu;
 		} gotMtu;
+		struct {
+			bool supported;
+			const char* failReason;
+		} gotMtuSupported;
 	};
 } WorkerResponse;
 
@@ -569,6 +578,15 @@ static int childProcess(guint id) {
 				if (err == 0) writeAll(STDOUT_FILENO, &resp, sizeof(WorkerResponse));
 				break;
 			}
+			case WorkerMtuSupported: {
+				WorkerResponse resp;
+				ZERO_RESPONSE(&resp);
+				resp.code = ResponseGotMtuSupported;
+
+				err = workerMtuSupported(order.mtuSupported.mtu, &resp.gotMtuSupported.supported, &resp.gotMtuSupported.failReason);
+				if (err == 0) writeAll(STDOUT_FILENO, &resp, sizeof(WorkerResponse));
+				break;
+			}
 			case WorkerAddRoot:
 				err = workerAddRoot(order.addRoot.addrSelf, order.addRoot.addrOther, order.addRoot.mtu, order.addRoot.useInitNs, order.addRoot.existing);
 				break;
@@ -872,6 +890,22 @@ int workGetInterfaceMtu(const char* intfName, int* mtu) {
 	err = waitForResponse(ResponseGotMtu);
 	if (err == 0) {
 		*mtu = workMain.response.gotMtu.mtu;
+	}
+	g_mutex_unlock(&workMain.lock);
+	return err;
+}
+
+int workMtuSupported(int mtu, bool* supported, const char** failReason) {
+	WorkerOrder* order = newOrder(WorkerMtuSupported);
+	order->mtuSupported.mtu = mtu;
+	int err = sendOrder(order, false);
+	if (err != 0) return err;
+
+	g_mutex_lock(&workMain.lock);
+	err = waitForResponse(ResponseGotMtuSupported);
+	if (err == 0) {
+		*supported = workMain.response.gotMtuSupported.supported;
+		*failReason = workMain.response.gotMtuSupported.failReason;
 	}
 	g_mutex_unlock(&workMain.lock);
 	return err;

@@ -516,7 +516,19 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 			ctx.mtu = edgeMtu;
 			lprintf(LogDebug, "Using edge MTU %d for network\n", ctx.mtu);
 		} else if (edgeMtu != ctx.mtu) {
-			lprintf(LogError, "Edge interfaces have different MTUs. All interfaces must share the same MTU to avoid segmentation problems. Interface %s has MTU %d, but interface %s has MTU %d.", globalParams->edgeNodes[0].intf, ctx.mtu, edge->intf, edgeMtu);
+			lprintf(LogError, "Edge interfaces have different MTUs. All interfaces must share the same MTU to avoid segmentation problems. Interface %s has MTU %d, but interface %s has MTU %d.\n", globalParams->edgeNodes[0].intf, ctx.mtu, edge->intf, edgeMtu);
+			err = 1;
+			goto cleanup;
+		}
+	}
+
+	// If we're using jumbo packets, make sure that that this feature is supported
+	if (ctx.mtu > 1500) { // Standard MTU for most systems; above this is considered "jumbo"
+		bool mtuSupported = false;
+		const char* failReason = NULL;
+		DO_OR_GOTO(workMtuSupported(ctx.mtu, &mtuSupported, &failReason), cleanup, err);
+		if (!mtuSupported) {
+			lprintf(LogError, "The edge interfaces have their MTU set to %d, which requires \"jumbo packet\" support. %s Alternatively, you can set the edge interface MTUs to 1500 to avoid this requirement.\n", ctx.mtu, failReason);
 			err = 1;
 			goto cleanup;
 		}

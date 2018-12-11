@@ -50,6 +50,7 @@ int workerCleanup(void);
 int workerGetEdgeRemoteMac(const char* intfName, ip4Addr ip, macAddr* edgeRemoteMac);
 int workerGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac);
 int workerGetInterfaceMtu(const char* intfName, int* mtu);
+int workerMtuSupported(int mtu, bool* supported, const char** failReason);
 int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, int mtu, bool useInitNs, bool existing);
 int workerAddEdgeInterface(const char* intfName);
 int workerAddHost(nodeId id, ip4Addr ip, macAddr macs[], int mtu, const TopoNode* node);

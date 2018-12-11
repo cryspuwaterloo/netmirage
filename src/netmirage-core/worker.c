@@ -47,6 +47,8 @@
 static char ovsDir[PATH_MAX+1] = {0};
 static char ovsSchema[PATH_MAX+1] = {0};
 
+static bool ovsSupportsJumboPackets = false;
+
 static netCache* nc = NULL;
 
 // We keep these outside of the cache because they are used frequently:
@@ -110,8 +112,13 @@ int workerInit(const char* nsPrefix, const char* ovsDirArg, const char* ovsSchem
 	}
 	lprintf(LogDebug, "Using Open vSwitch version '%s'\n", ovsVer);
 	bool ovsNewEnough = false;
-	if (ovsValidVer && (ovsMajor > 2 || (ovsMajor == 2 && ovsMinor >= 1))) {
-		ovsNewEnough = true;
+	if (ovsValidVer) {
+		if (ovsMajor > 2 || (ovsMajor == 2 && ovsMinor >= 1)) {
+			ovsNewEnough = true;
+		}
+		if (ovsMajor > 2 || (ovsMajor == 2 && ovsMinor >= 6)) {
+			ovsSupportsJumboPackets = true;
+		}
 	}
 	if (!ovsNewEnough) {
 		lprintf(LogWarning, "This program requires Open vSwitch 2.1.0 or later. You are using version '%s', which appears to be older. If an error occurs while setting up the switch, you will need to upgrade your version of Open vSwitch.\n", ovsVer);
@@ -225,6 +232,15 @@ int workerGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac) {
 
 int workerGetInterfaceMtu(const char* intfName, int* mtu) {
 	return netGetMtu(defaultNet, intfName, mtu);
+}
+
+int workerMtuSupported(int mtu, bool* supported, const char** failReason) {
+	*supported = true;
+	if (!ovsSupportsJumboPackets) {
+		*supported = false;
+		*failReason = "You are using an old version of Open vSwitch that does not support jumbo packets. Update to version 2.6.0 or later to use jumbo packets.";
+	}
+	return 0;
 }
 
 static int applyNamespaceParams(void) {

@@ -68,6 +68,10 @@ int workGetEdgeLocalMac(const char* intfName, macAddr* edgeLocalMac);
 // automatically joins.
 int workGetInterfaceMtu(const char* intfName, int* mtu);
 
+// Determines if a requested MTU size is supported by the system configuration.
+// Since this function returns a response, it automatically joins.
+int workMtuSupported(int mtu, bool* supported, const char** failReason);
+
 // Creates a network namespace called the "root", which provides connectivity to
 // the external world.
 int workAddRoot(ip4Addr addrSelf, ip4Addr addrOther, int mtu, bool useInitNs);
