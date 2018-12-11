@@ -109,7 +109,10 @@ LogLevel logThreshold(void) {
 
 static void logVprintf(const char* fmt, va_list args) {
 	if (logStream != NULL) {
-		vfprintf(logStream, fmt, args);
+		va_list argsCopy;
+		va_copy(argsCopy, args);
+		vfprintf(logStream, fmt, argsCopy);
+		va_end(argsCopy);
 	} else {
 		char* msg;
 		if (newVsprintf(&msg, fmt, args) < 0) return;
@@ -143,13 +146,20 @@ int newSprintf(char** buf, const char* fmt, ...) {
 
 int newVsprintf(char** buf, const char* fmt, va_list args) {
 	const size_t defaultBufferSize = 255;
+	va_list argsCopy;
+
 	*buf = emalloc(defaultBufferSize);
-	int neededChars = vsnprintf(*buf, defaultBufferSize, fmt, args);
+	va_copy(argsCopy, args);
+	int neededChars = vsnprintf(*buf, defaultBufferSize, fmt, argsCopy);
+	va_end(argsCopy);
+
 	if (neededChars < 0) {
 		free(*buf);
 	} else if ((size_t)neededChars >= defaultBufferSize) {
 		*buf = earealloc(*buf, (size_t)neededChars, 1, 1); // Extra byte for NUL
-		neededChars = vsnprintf(*buf, defaultBufferSize, fmt, args);
+		va_copy(argsCopy, args);
+		neededChars = vsnprintf(*buf, (size_t)neededChars+1, fmt, argsCopy);
+		va_end(argsCopy);
 	}
 	return neededChars;
 }
