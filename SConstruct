@@ -22,7 +22,7 @@
 appVersion = {
 	'major': 0,
 	'minor': 9,
-	'revision': 1
+	'revision': 2
 }
 
 EnsureSConsVersion(2, 4)
