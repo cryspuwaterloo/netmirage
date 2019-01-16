@@ -522,16 +522,14 @@ int setupGraphML(const setupGraphMLParams* gmlParams) {
 		}
 	}
 
-	// If we're using jumbo packets, make sure that that this feature is supported
-	if (ctx.mtu > 1500) { // Standard MTU for most systems; above this is considered "jumbo"
-		bool mtuSupported = false;
-		const char* failReason = NULL;
-		DO_OR_GOTO(workMtuSupported(ctx.mtu, &mtuSupported, &failReason), cleanup, err);
-		if (!mtuSupported) {
-			lprintf(LogError, "The edge interfaces have their MTU set to %d, which requires \"jumbo packet\" support. %s Alternatively, you can set the edge interface MTUs to 1500 to avoid this requirement.\n", ctx.mtu, failReason);
-			err = 1;
-			goto cleanup;
-		}
+	// If we're using a non-standard MTU, make sure that that this feature is supported
+	bool mtuSupported = false;
+	const char* failReason = NULL;
+	DO_OR_GOTO(workMtuSupported(ctx.mtu, &mtuSupported, &failReason), cleanup, err);
+	if (!mtuSupported) {
+		lprintf(LogError, "The edge interfaces have their MTU set to %d, which requires \"jumbo packet\" support. %s Alternatively, you can set the edge interface MTUs to the default value to avoid this requirement.\n", ctx.mtu, failReason);
+		err = 1;
+		goto cleanup;
 	}
 
 	DO_OR_GOTO(workAddRoot(rootAddrs[0], rootAddrs[1], ctx.mtu, globalParams->rootIsInitNs), cleanup, err);

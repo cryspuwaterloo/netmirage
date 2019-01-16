@@ -236,9 +236,11 @@ int workerGetInterfaceMtu(const char* intfName, int* mtu) {
 
 int workerMtuSupported(int mtu, bool* supported, const char** failReason) {
 	*supported = true;
-	if (!ovsSupportsJumboPackets) {
-		*supported = false;
-		*failReason = "You are using an old version of Open vSwitch that does not support jumbo packets. Update to version 2.6.0 or later to use jumbo packets.";
+	if (mtu != IP4_DEFAULT_MTU) {
+		if (!ovsSupportsJumboPackets) {
+			*supported = false;
+			*failReason = "You are using an old version of Open vSwitch that does not support custom MTU values. Update to version 2.6.0 or later to use non-standard MTUs.";
+		}
 	}
 	return 0;
 }
@@ -319,8 +321,10 @@ int workerAddRoot(ip4Addr addrSelf, ip4Addr addrOther, int mtu, bool useInitNs, 
 		err = ovsAddBridge(rootSwitch, RootBridgeName);
 		if (err != 0) return err;
 
-		err = ovsSetBridgeMtu(rootSwitch, RootBridgeName, mtu);
-		if (err != 0) return err;
+		if (mtu != IP4_DEFAULT_MTU) {
+			err = ovsSetBridgeMtu(rootSwitch, RootBridgeName, mtu);
+			if (err != 0) return err;
+		}
 
 		// Reject everything initially, but switch ARP normally
 		err = ovsClearFlows(rootSwitch, RootBridgeName);

@@ -43,6 +43,8 @@ typedef struct interfaceSettings {
 
 #define INTERFACE_BUF_LEN 16
 
+extern const int IP4_DEFAULT_MTU;
+
 // Initializes the network configuration module. Max length of namespacePrefix
 // is theoretically PATH_MAX-1. Returns 0 on success or an error code otherwise.
 int netInit(const char* namespacePrefix);

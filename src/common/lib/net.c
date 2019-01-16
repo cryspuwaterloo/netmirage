@@ -46,6 +46,7 @@
 #include <fcntl.h>
 #include <linux/ethtool.h>
 #include <linux/fib_rules.h>
+#include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/limits.h>
 #include <linux/netlink.h>
@@ -87,6 +88,8 @@
 #define SYSCTL_MARTIANS_DEFAULT "/proc/sys/net/ipv4/conf/default/rp_filter"
 #define SYSCTL_DISABLE_IPV6     "/proc/sys/net/ipv6/conf/all/disable_ipv6"
 #define SYSCTL_ARP_GC_PREFIX    "/proc/sys/net/ipv4/neigh/default/gc_thresh"
+
+const int IP4_DEFAULT_MTU = ETH_DATA_LEN;
 
 static char namespacePrefix[PATH_MAX];
 static double pschedTicksPerMs = 1.0;
@@ -622,7 +625,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 	}
 
 	uint32_t writeMtu = 0;
-	if (mtu > 0) writeMtu = (uint32_t)mtu;
+	if (mtu > 0 && mtu != IP4_DEFAULT_MTU) writeMtu = (uint32_t)mtu;
 
 	if (writeMtu > 0) {
 		nlPushAttr(nl, IFLA_MTU);
