@@ -358,12 +358,12 @@ static int gmlAddLink(const GmlLink* link, void* userData) {
 			return 1;
 		}
 		DO_OR_RETURN(workAddLink(sourceId, targetId, sourceState->addr, targetState->addr, macs, ctx->mtu, &link->t));
-		if (link->weight < 0.f) {
-			lprintf(LogError, "The link from '%s' to '%s' in the topology has negative weight %f, which is not supported.\n", link->sourceName, link->targetName, link->weight);
+		if (link->weightUp < 0.f || link->weightDown < 0.f) {
+			lprintf(LogError, "The link from '%s' to '%s' in the topology has negative weight %f, which is not supported.\n", link->sourceName, link->targetName, link->weightUp < link->weightDown ? link->weightUp : link->weightDown);
 			return 1;
 		} else {
-			rpSetWeight(ctx->routes, sourceId, targetId, link->weight);
-			rpSetWeight(ctx->routes, targetId, sourceId, link->weight);
+			rpSetWeight(ctx->routes, sourceId, targetId, link->weightUp);
+			rpSetWeight(ctx->routes, targetId, sourceId, link->weightDown);
 		}
 	}
 	return 0;

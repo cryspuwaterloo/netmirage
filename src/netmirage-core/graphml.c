@@ -76,7 +76,10 @@ typedef struct {
 	// Value used in nodes' type attribute to indicate that they are a client
 	const char* clientType;
 
-	const char* weightKey; // Key for shortest path detection
+	// Keys for shortest path detection
+	const char* weightKey;
+	const char* weightKeyUp;
+	const char* weightKeyDown;
 
 	// GpUnknown state
 	unsigned int unknownDepth;		// The depth since the first unknown element
@@ -98,6 +101,16 @@ typedef struct {
 		xmlChar* packetLossId;
 		xmlChar* jitterId;
 		xmlChar* queueLenId;
+		xmlChar* weightUpId;
+		xmlChar* latencyUpId;
+		xmlChar* packetLossUpId;
+		xmlChar* jitterUpId;
+		xmlChar* queueLenUpId;
+		xmlChar* weightDownId;
+		xmlChar* latencyDownId;
+		xmlChar* packetLossDownId;
+		xmlChar* jitterDownId;
+		xmlChar* queueLenDownId;
 	} edgeAttribs;
 
 	// Attribute values
@@ -173,6 +186,13 @@ static void graphFatalError(GraphParserState* state, const char* fmt, ...) {
 static void initGraphParserState(GraphParserState* state, NewNodeFunc newNode, NewLinkFunc newLink, void* userData, const char* clientType, const char* weightKey) {
 	state->clientType = clientType;
 	state->weightKey = weightKey;
+	size_t keylen = strlen(weightKey);
+	char* weightKeyUp = emalloc(keylen+3);
+	strcpy(weightKeyUp, weightKey);
+	state->weightKeyUp = strcat(weightKeyUp, "up");
+	char* weightKeyDown = emalloc(keylen+5);
+	strcpy(weightKeyDown, weightKey);
+	state->weightKeyDown = strcat(weightKeyDown, "down");
 	state->newNodeFunc = newNode;
 	state->newLinkFunc = newLink;
 	state->userData = userData;
@@ -272,15 +292,26 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 					else CHECK_SET_ATTR("bandwidthdown", true, true, false, node, bandwidthDown)
 				} else if (xmlStrEqual(keyFor, (const xmlChar*)"edge")) {
 					CHECK_SET_ATTR(state->weightKey, false, true, false, edge, weight)
+					else CHECK_SET_ATTR(state->weightKeyUp, false, true, false, edge, weightUp)
+					else CHECK_SET_ATTR(state->weightKeyDown, false, true, false, edge, weightDown)
 					CHECK_SET_ATTR("latency", true, true, false, edge, latency)
 					else CHECK_SET_ATTR("packetloss", true, true, false, edge, packetLoss)
 					else CHECK_SET_ATTR("jitter", true, true, false, edge, jitter)
 					else CHECK_SET_ATTR("queue_len", true, false, false, edge, queueLen)
+					else CHECK_SET_ATTR("latencyup", true, true, false, edge, latencyUp)
+					else CHECK_SET_ATTR("packetlossup", true, true, false, edge, packetLossUp)
+					else CHECK_SET_ATTR("jitterup", true, true, false, edge, jitterUp)
+					else CHECK_SET_ATTR("queue_lenup", true, false, false, edge, queueLenUp)
+					else CHECK_SET_ATTR("latencydown", true, true, false, edge, latencyDown)
+					else CHECK_SET_ATTR("packetlossdown", true, true, false, edge, packetLossDown)
+					else CHECK_SET_ATTR("jitterdown", true, true, false, edge, jitterDown)
+					else CHECK_SET_ATTR("queue_lendown", true, false, false, edge, queueLenDown)
 				}
 			}
 			unknown = true;
 		} else if (xmlStrEqual(name, (const xmlChar*)"graph")) {
-			if (state->edgeAttribs.weightId == NULL) graphFatalError(state, "The topology file did not include an edge parameter '%s' for route calculations. Specify --weight to use a different attribute.\n", state->weightKey);
+			if (state->edgeAttribs.weightId == NULL && (state->edgeAttribs.weightUpId == NULL || state->edgeAttribs.weightDownId == NULL))
+				graphFatalError(state, "The topology file did not include an edge parameter '%s' for route calculations. Specify --weight to use a different attribute.\n", state->weightKey);
 			for (const xmlChar** att = atts; *att; att += 2) {
 				if (xmlStrEqual(att[0], (const xmlChar*)"edgedefault")) {
 					state->defaultUndirected = xmlStrEqual(att[1], (const xmlChar*)"undirected");
@@ -334,11 +365,16 @@ static void graphStartElement(void* ctx, const xmlChar* name, const xmlChar** at
 				copyXmlStr(&state->linkTargetId, target);
 				state->link.sourceName = (const char*)state->linkSourceId.data;
 				state->link.targetName = (const char*)state->linkTargetId.data;
-				state->link.weight = INFINITY;
-				state->link.t.latency = 0.0;
-				state->link.t.packetLoss = 0.0;
-				state->link.t.jitter = 0.0;
-				state->link.t.queueLen = 0;
+				state->link.weightUp = INFINITY;
+				state->link.weightDown = INFINITY;
+				state->link.t.latencyUp = 0.0;
+				state->link.t.packetLossUp = 0.0;
+				state->link.t.jitterUp = 0.0;
+				state->link.t.latencyDown = 0.0;
+				state->link.t.packetLossDown = 0.0;
+				state->link.t.jitterDown = 0.0;
+				state->link.t.queueLenUp = 0;
+				state->link.t.queueLenDown = 0;
 				state->mode = GpEdge;
 			}
 		} else unknown = true;
@@ -412,16 +448,41 @@ static void graphEndElement(void* ctx, const xmlChar* name) {
 
 		case GpEdge:
 			if (state->edgeAttribs.weightId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.weightId)) {
-				state->link.weight = strtof((const char*)value, NULL);
+				state->link.weightUp = state->link.weightDown = strtof((const char*)value, NULL);
+                                lprintf(LogDebug, "weight set to %f\n", state->link.weightUp);
+			} else if (state->edgeAttribs.weightUpId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.weightUpId)) {
+				state->link.weightUp = strtof((const char*)value, NULL);
+                                lprintf(LogDebug, "weightUp set to %f\n", state->link.weightUp);
+			} else if (state->edgeAttribs.weightDownId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.weightDownId)) {
+				state->link.weightDown = strtof((const char*)value, NULL);
+                                lprintf(LogDebug, "weightDown set to %f\n", state->link.weightDown);
 			}
 			if (state->edgeAttribs.latencyId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.latencyId)) {
-				state->link.t.latency = strtod((const char*)value, NULL);
+				state->link.t.latencyUp = state->link.t.latencyDown = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.packetLossId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.packetLossId)) {
-				state->link.t.packetLoss = strtod((const char*)value, NULL);
+				state->link.t.packetLossUp = state->link.t.packetLossDown = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.jitterId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.jitterId)) {
-				state->link.t.jitter = strtod((const char*)value, NULL);
+				state->link.t.jitterUp = state->link.t.jitterDown = strtod((const char*)value, NULL);
 			} else if (state->edgeAttribs.queueLenId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.queueLenId)) {
-				state->link.t.queueLen = (uint32_t)strtoul((const char*)value, NULL, 10);
+				state->link.t.queueLenUp = state->link.t.queueLenDown = (uint32_t)strtoul((const char*)value, NULL, 10);
+			} else if (state->edgeAttribs.latencyUpId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.latencyUpId)) {
+				state->link.t.latencyUp = strtod((const char*)value, NULL);
+                                lprintf(LogDebug, "latencyUp set to %f\n", state->link.t.latencyUp);
+			} else if (state->edgeAttribs.packetLossUpId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.packetLossUpId)) {
+				state->link.t.packetLossUp = strtod((const char*)value, NULL);
+			} else if (state->edgeAttribs.jitterUpId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.jitterUpId)) {
+				state->link.t.jitterUp = strtod((const char*)value, NULL);
+			} else if (state->edgeAttribs.queueLenUpId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.queueLenUpId)) {
+				state->link.t.queueLenUp = (uint32_t)strtoul((const char*)value, NULL, 10);
+			} else if (state->edgeAttribs.latencyDownId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.latencyDownId)) {
+				state->link.t.latencyDown = strtod((const char*)value, NULL);
+                                lprintf(LogDebug, "latencyDown set to %f\n", state->link.t.latencyDown);
+			} else if (state->edgeAttribs.packetLossDownId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.packetLossDownId)) {
+				state->link.t.packetLossDown = strtod((const char*)value, NULL);
+			} else if (state->edgeAttribs.jitterDownId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.jitterDownId)) {
+				state->link.t.jitterDown = strtod((const char*)value, NULL);
+			} else if (state->edgeAttribs.queueLenDownId && xmlStrEqual(state->dataKey.data, state->edgeAttribs.queueLenDownId)) {
+				state->link.t.queueLenDown = (uint32_t)strtoul((const char*)value, NULL, 10);
 			}
 			break;
 
