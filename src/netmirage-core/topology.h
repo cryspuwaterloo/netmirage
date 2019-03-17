@@ -41,8 +41,12 @@ typedef struct {
 
 // A link represents a network connection between nodes
 typedef struct {
-	double latency;
-	double packetLoss;
-	double jitter;
-	uint32_t queueLen;
+	double latencyUp;
+	double packetLossUp;
+	double jitterUp;
+	uint32_t queueLenUp;
+	double latencyDown;
+	double packetLossDown;
+	double jitterDown;
+	uint32_t queueLenDown;
 } TopoLink;

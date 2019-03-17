@@ -434,7 +434,7 @@ int workerSetSelfLink(nodeId id, const TopoLink* link) {
 	if (intfIdx == -1) return err;
 
 	// We apply the whole shaping in one direction in order to respect jitter
-	return netSetEgressShaping(net, intfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
+	return netSetEgressShaping(net, intfIdx, link->latencyDown, link->jitterDown, link->packetLossDown, 0.0, link->queueLenDown, true);
 }
 
 static int workGetLinkEndpoints(nodeId id1, nodeId id2, char* name1, char* name2, netContext** net1, netContext** net2, char* intf1, char* intf2) {
@@ -513,9 +513,9 @@ int workerAddLink(nodeId sourceId, nodeId targetId, ip4Addr sourceIp, ip4Addr ta
 	err = buildVethPair(sourceNet, targetNet, sourceIntf, targetIntf, sourceIp, targetIp, &macs[0], &macs[1], mtu, &sourceIntfIdx, &targetIntfIdx);
 	if (err != 0) return err;
 
-	err = netSetEgressShaping(sourceNet, sourceIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
+	err = netSetEgressShaping(sourceNet, sourceIntfIdx, link->latencyDown, link->jitterDown, link->packetLossDown, 0.0, link->queueLenDown, true);
 	if (err != 0) return err;
-	err = netSetEgressShaping(targetNet, targetIntfIdx, link->latency, link->jitter, link->packetLoss, 0.0, link->queueLen, true);
+	err = netSetEgressShaping(targetNet, targetIntfIdx, link->latencyUp, link->jitterUp, link->packetLossUp, 0.0, link->queueLenUp, true);
 	if (err != 0) return err;
 
 	err = netModifyRoute(sourceNet, false, netGetTableId(TableMain), ScopeLink, CreatorAdmin, targetIp, 32, 0, sourceIntfIdx, true);

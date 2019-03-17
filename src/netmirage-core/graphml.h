@@ -36,7 +36,8 @@ typedef struct {
 	const char* sourceName;
 	const char* targetName;
 
-	float weight;
+	float weightUp;
+	float weightDown;
 	TopoLink t;
 } GmlLink;
 
