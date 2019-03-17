@@ -9,15 +9,3 @@ setup.cfg
 # SCons
 .sconsign.dblite
 
-# Eclipse
-.project
-.cproject
-.metadata
-tmp/
-*.tmp
-*.bak
-*.swp
-*~.nib
-local.properties
-.settings/
-.loadpath
