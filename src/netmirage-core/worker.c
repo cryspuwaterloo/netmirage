@@ -447,6 +447,7 @@ static int workGetLinkEndpoints(nodeId id1, nodeId id2, char* name1, char* name2
 	*net2 = ncOpenNamespace(nc, id2, name2, false, false, &err);
 	if (*net2 == NULL) return err;
 
+	// Notice: intf1 is created from id2, and vice versa
 	sprintf(intf1, "%s-%u", NodeLinkPrefix, id2);
 	sprintf(intf2, "%s-%u", NodeLinkPrefix, id1);
 
