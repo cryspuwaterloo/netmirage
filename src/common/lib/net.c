@@ -577,10 +577,10 @@ cleanup:
 	return err;
 }
 
-int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, int mtu, bool sync) {
+int netCreateVethPair(const char* intfName1, const char* intfName2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, int mtu, bool sync) {
 	if (PASSES_LOG_THRESHOLD(LogDebug)) {
 		lprintHead(LogDebug);
-		lprintDirectf(LogDebug, "Creating virtual ethernet pair (%p:'%s', %p:'%s')", ctx1, name1, ctx2, name2);
+		lprintDirectf(LogDebug, "Creating virtual ethernet pair (%p:'%s', %p:'%s')", ctx1, intfName1, ctx2, intfName2);
 		char mac[MAC_ADDR_BUFLEN];
 		if (addr1 != NULL) {
 			macAddrToString(addr1, mac);
@@ -606,7 +606,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 
 	nlPushAttr(nl, IFLA_IFNAME);
 	{
-		nlBufferAppend(nl, name1, strlen(name1) + 1);
+		nlBufferAppend(nl, intfName1, strlen(intfName1) + 1);
 	}
 	nlPopAttr(nl);
 
@@ -649,7 +649,7 @@ int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, ne
 				nlBufferAppend(nl, &ifi, sizeof(ifi));
 				nlPushAttr(nl, IFLA_IFNAME);
 				{
-					nlBufferAppend(nl, name2, strlen(name2) + 1);
+					nlBufferAppend(nl, intfName2, strlen(intfName2) + 1);
 				}
 				nlPopAttr(nl);
 				nlPushAttr(nl, IFLA_NET_NS_FD);

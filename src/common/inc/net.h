@@ -100,7 +100,7 @@ int netEnumInterfaces(netIfCallback callback, netContext* ctx, void* userData);
 // Creates a virtual Ethernet pair of interfaces with endpoints in the given
 // namespaces. If the MAC addresses are not NULL, they are used to configure the
 // new interfaces.
-int netCreateVethPair(const char* name1, const char* name2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, int mtu, bool sync);
+int netCreateVethPair(const char* intfName1, const char* intfName2, netContext* ctx1, netContext* ctx2, const macAddr* addr1, const macAddr* addr2, int mtu, bool sync);
 
 // Returns the interface index for an interface. On error, returns -1 and sets
 // err (if provided) to the error code.
